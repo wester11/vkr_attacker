@@ -352,14 +352,26 @@ input:focus, select:focus { outline: none; border-color: #555; }
 
 </div>
 
-<div class="card">
-  <h3>Лог</h3>
-  <div id="log"></div>
+<div style="display:grid;grid-template-columns:1fr 1fr;gap:10px">
+
+  <div class="card">
+    <h3>Активность атак</h3>
+    <div id="activity" style="font-size:12px;line-height:1.8;color:#888">
+      <span style="color:#444">Нет активных атак</span>
+    </div>
+  </div>
+
+  <div class="card">
+    <h3>Лог событий</h3>
+    <div id="log"></div>
+  </div>
+
 </div>
 
 <script>
 const B = window.location.origin;
 const ATK = ['flood','ddos','scan','brute','sqli','slowloris','flash','slow'];
+let _prevStatus = {};  // ip -> last known status for change detection
 
 function ts() { return new Date().toLocaleTimeString(); }
 function log(msg, color) {
@@ -465,6 +477,38 @@ async function refresh() {
 
     if (!document.getElementById('target-ip').value && d.target)
       document.getElementById('target-ip').value = d.target;
+
+    // Обновить панель активности
+    const attacking = Object.entries(d.workers).filter(([,w]) => w.status === 'attacking');
+    const act = document.getElementById('activity');
+    if (attacking.length === 0) {
+      act.innerHTML = '<span style="color:#444">Нет активных атак</span>';
+    } else {
+      act.innerHTML = attacking.map(([ip, w]) => {
+        const name = (w.hostname && w.hostname !== ip) ? w.hostname : ip;
+        return '<div style="border-left:2px solid #fa0;padding-left:8px;margin-bottom:6px">'
+          +'<span style="color:#fa0;font-weight:bold">'+w.current_attack+'</span>'
+          +' &rarr; <span style="color:#aaa">'+d.target+'</span><br>'
+          +'<span style="color:#555;font-size:11px">'+name+'</span>'
+          +'</div>';
+      }).join('');
+    }
+
+    // Детектировать изменения статуса воркеров и писать в лог
+    Object.entries(d.workers).forEach(([ip, w]) => {
+      const prev = _prevStatus[ip];
+      if (prev !== undefined && prev !== w.status) {
+        if (w.status === 'attacking')
+          log('['+ip+'] начал '+w.current_attack, '#fa0');
+        else if (w.status === 'idle' && prev === 'attacking')
+          log('['+ip+'] остановлен', '#888');
+        else if (w.status === 'offline' && prev !== 'offline')
+          log('['+ip+'] offline', '#e44');
+        else if (w.status !== 'offline' && prev === 'offline')
+          log('['+ip+'] online', '#4c4');
+      }
+      _prevStatus[ip] = w.status;
+    });
 
     const keys = Object.keys(d.workers);
     document.getElementById('w-count').textContent = '('+keys.length+')';
