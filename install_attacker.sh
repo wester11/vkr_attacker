@@ -95,7 +95,8 @@ sudo systemctl restart commander
 ok "Commander сервис запущен"
 
 # ── Итог ──────────────────────────────────────────────────────────────────────
-MY_IP=$(hostname -I | awk '{print $1}')
+PUBLIC_IP=$(curl -s --max-time 4 ifconfig.me 2>/dev/null || curl -s --max-time 4 api.ipify.org 2>/dev/null)
+MY_IP=${PUBLIC_IP:-$(hostname -I | awk '{print $1}')}
 echo ""
 echo -e "${GREEN}╔══════════════════════════════════════════════════════╗${NC}"
 echo -e "${GREEN}║              COMMANDER ГОТОВ                         ║${NC}"
