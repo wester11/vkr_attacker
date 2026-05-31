@@ -494,9 +494,9 @@ async function refresh() {
         +'</div>'
         +'<div class="worker-btns">'
         +'<select id="sel-'+ip+'" style="width:auto;flex:none;padding:3px 6px;margin:0">'+opts+'</select>'
-        +'<button class="btn" style="padding:3px 10px" onclick="runWorker(\''+ip+'\')">Run</button>'
-        +'<button class="btn dim" style="padding:3px 10px" onclick="stopWorker(\''+ip+'\')">Stop</button>'
-        +'<button class="btn red" style="padding:3px 8px" onclick="removeWorker(\''+ip+'\')">X</button>'
+        +'<button class="btn" style="padding:3px 10px" data-ip="'+ip+'" onclick="runWorker(this.dataset.ip)">Run</button>'
+        +'<button class="btn dim" style="padding:3px 10px" data-ip="'+ip+'" onclick="stopWorker(this.dataset.ip)">Stop</button>'
+        +'<button class="btn red" style="padding:3px 8px" data-ip="'+ip+'" onclick="removeWorker(this.dataset.ip)">X</button>'
         +'</div>'
         +'</div>';
     }).join('');
