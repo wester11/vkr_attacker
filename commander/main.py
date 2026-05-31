@@ -343,7 +343,7 @@ input:focus, select:focus { outline: none; border-color: #555; }
 
   <div class="card">
     <h3>Воркеры <span id="w-count" style="color:#444">(0)</span></h3>
-    <input id="worker-ip" placeholder="Внутренний IP воркера">
+    <input id="worker-ip" placeholder="IP воркера (напр. 89.169.x.x)">
     <button class="btn grn" onclick="addWorker()">+ Добавить</button>
     <div id="workers-list" style="margin-top:8px">
       <span style="color:#444;font-size:11px">Нет воркеров</span>
