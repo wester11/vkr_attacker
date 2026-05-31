@@ -17,13 +17,11 @@ ok()   { echo -e "${GREEN}[✓]${NC} $1"; }
 
 if [ "$(id -u)" -eq 0 ]; then
     SERVICE_USER="root"
-    BASE_HOME="/root"
 else
     SERVICE_USER="$(id -un)"
-    BASE_HOME="$HOME"
 fi
 
-INSTALL_DIR="${BASE_HOME}/attacker"
+INSTALL_DIR="/opt/attacker-worker"
 REPO="https://raw.githubusercontent.com/wester11/vkr_attacker/main"
 
 echo ""
@@ -50,7 +48,8 @@ ok "Системные пакеты установлены"
 
 # ── Python окружение ──────────────────────────────────────────────────────────
 VENV="${INSTALL_DIR}/.venv"
-mkdir -p "$INSTALL_DIR/attacks"
+sudo mkdir -p "$INSTALL_DIR/attacks"
+sudo chown -R "$SERVICE_USER":"$SERVICE_USER" "$INSTALL_DIR"
 python3 -m venv "$VENV"
 "$VENV/bin/pip" install --upgrade pip --quiet
 "$VENV/bin/pip" install fastapi uvicorn requests --quiet
@@ -58,15 +57,16 @@ ok "Python окружение готово"
 
 # ── Скачать файлы ─────────────────────────────────────────────────────────────
 info "Скачиваю worker и скрипты атак..."
-wget -q "${REPO}/worker/agent.py"        -O "${INSTALL_DIR}/agent.py"
-wget -q "${REPO}/attacks/brute.py"       -O "${INSTALL_DIR}/attacks/brute.py"
-wget -q "${REPO}/attacks/sqli.py"        -O "${INSTALL_DIR}/attacks/sqli.py"
-wget -q "${REPO}/attacks/ddos_spoof.py"  -O "${INSTALL_DIR}/attacks/ddos_spoof.py"
-wget -q "${REPO}/attacks/slowloris.py"   -O "${INSTALL_DIR}/attacks/slowloris.py"
+sudo wget -q "${REPO}/worker/agent.py"        -O "${INSTALL_DIR}/agent.py"
+sudo wget -q "${REPO}/attacks/brute.py"       -O "${INSTALL_DIR}/attacks/brute.py"
+sudo wget -q "${REPO}/attacks/sqli.py"        -O "${INSTALL_DIR}/attacks/sqli.py"
+sudo wget -q "${REPO}/attacks/ddos_spoof.py"  -O "${INSTALL_DIR}/attacks/ddos_spoof.py"
+sudo wget -q "${REPO}/attacks/slowloris.py"   -O "${INSTALL_DIR}/attacks/slowloris.py"
+sudo chown -R "$SERVICE_USER":"$SERVICE_USER" "$INSTALL_DIR"
 ok "Файлы загружены"
 
 # ── Systemd сервис ────────────────────────────────────────────────────────────
-cat > /etc/systemd/system/attacker-worker.service << SVCEOF
+sudo tee /etc/systemd/system/attacker-worker.service > /dev/null << SVCEOF
 [Unit]
 Description=Attack Worker Agent
 After=network.target
