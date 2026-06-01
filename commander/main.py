@@ -52,13 +52,12 @@ current_proc = None
 # ─── Локальные атаки командера ────────────────────────────────────────────────
 ATTACKS = {
     "flood":     lambda t: ["ab", "-n", "500000", "-c", "300", "-q", f"http://{t}/"],
+    "ddos":      lambda t: [sys.executable, A("ddos_spoof.py"), t],
     "scan":      lambda t: ["nikto", "-h", f"http://{t}", "-maxtime", "120s", "-quiet"],
     "brute":     lambda t: [sys.executable, A("brute.py"), t],
     "sqli":      lambda t: [sys.executable, A("sqli.py"), t],
     "slowloris": lambda t: [sys.executable, A("slowloris.py"), t],
-    "flash":     lambda t: ["wrk", "-t4", "-c50", "-d60s", f"http://{t}/"],
     "slow":      lambda t: ["wrk", "-t2", "-c20", "-d60s", f"http://{t}/search"],
-    "ddos":      lambda t: [sys.executable, A("ddos_spoof.py"), t],
 }
 
 
@@ -253,279 +252,493 @@ def ui():
     return _UI_HTML
 
 
-_UI_HTML = """<!DOCTYPE html>
+_UI_HTML = r"""<!DOCTYPE html>
 <html lang="ru">
 <head>
 <meta charset="UTF-8">
-<title>Главная нода</title>
+<title>Главная нода — управление атакой</title>
 <style>
-* { box-sizing: border-box; margin: 0; padding: 0; }
-body { font-family: 'Segoe UI', sans-serif; background: #111; color: #ccc;
-       padding: 20px; font-size: 14px; max-width: 960px; margin: 0 auto; }
-h1 { color: #fff; margin-bottom: 4px; font-size: 20px; font-weight: 600; }
-.subtitle { color: #555; font-size: 12px; margin-bottom: 16px; }
+*{box-sizing:border-box;margin:0;padding:0}
+body{font-family:'Segoe UI',sans-serif;background:#0f0f0f;color:#c8c8c8;padding:20px;font-size:13px;max-width:1200px;margin:0 auto}
+h1{color:#fff;font-size:19px;font-weight:600;margin-bottom:3px}
+.sub{color:#555;font-size:11px;margin-bottom:14px}
 
-.status-bar { display: flex; gap: 20px; background: #1a1a1a; border: 1px solid #2a2a2a;
-              border-radius: 6px; padding: 10px 16px; margin-bottom: 16px;
-              flex-wrap: wrap; align-items: center; }
-.status-bar .item { display: flex; flex-direction: column; gap: 2px; }
-.status-bar .label { font-size: 10px; color: #555; text-transform: uppercase; letter-spacing: .5px; }
-.status-bar .value { font-size: 13px; color: #ddd; font-weight: 500; }
-.status-bar .value.active { color: #f80; }
-.status-bar .value.ok { color: #4c4; }
+/* Статус-строка */
+.sbar{display:flex;gap:24px;background:#161616;border:1px solid #252525;border-radius:6px;padding:10px 16px;margin-bottom:14px;flex-wrap:wrap;align-items:center}
+.sbar .si{display:flex;flex-direction:column;gap:1px}
+.sbar .sl{font-size:9px;color:#444;text-transform:uppercase;letter-spacing:.6px}
+.sbar .sv{font-size:13px;color:#ddd;font-weight:500}
+.sbar .sv.on{color:#f80}.sbar .sv.ok{color:#4a4}
 
-.row { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin-bottom: 12px; }
-.card { background: #1a1a1a; border: 1px solid #2a2a2a; border-radius: 6px; padding: 16px; }
-.card-title { font-size: 11px; font-weight: 600; color: #666; text-transform: uppercase;
-              letter-spacing: .8px; margin-bottom: 12px; }
+/* Двухколоночный макет */
+.layout{display:grid;grid-template-columns:1fr 320px;gap:12px;align-items:start}
 
-input, select {
-  width: 100%; background: #111; color: #ccc; border: 1px solid #333; border-radius: 4px;
-  padding: 8px 10px; font-size: 13px; margin-bottom: 8px; font-family: inherit;
-  transition: border-color .15s;
-}
-input:focus, select:focus { outline: none; border-color: #4a9; }
-input::placeholder { color: #444; }
+/* Карточки */
+.card{background:#161616;border:1px solid #252525;border-radius:6px;padding:14px;margin-bottom:12px}
+.ctitle{font-size:10px;font-weight:700;color:#555;text-transform:uppercase;letter-spacing:.8px;margin-bottom:10px}
 
-.btn { background: transparent; border: 1px solid #4a9; color: #4a9; border-radius: 4px;
-       padding: 7px 14px; cursor: pointer; font-size: 13px; transition: all .15s;
-       font-family: inherit; }
-.btn:hover { background: #4a9; color: #000; }
-.btn.red  { border-color: #e44; color: #e44; }
-.btn.red:hover  { background: #e44; color: #fff; }
-.btn.full { width: 100%; margin-top: 8px; }
-.btn.stop-all { background: #2a0a0a; border-color: #e44; color: #e44; font-weight: 600;
-                width: 100%; padding: 10px; margin-top: 10px; font-size: 14px; }
-.btn.stop-all:hover { background: #e44; color: #fff; }
+input,select{width:100%;background:#0f0f0f;color:#ccc;border:1px solid #2e2e2e;border-radius:4px;padding:7px 9px;font-size:12px;margin-bottom:7px;font-family:inherit;transition:border-color .15s}
+input:focus,select:focus{outline:none;border-color:#4a9}
+input::placeholder{color:#3a3a3a}
 
-.atk-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 6px; margin: 10px 0; }
-.atk-btn { background: #111; border: 1px solid #333; color: #aaa; border-radius: 4px;
-           padding: 8px 6px; cursor: pointer; font-size: 12px; text-align: center;
-           transition: all .15s; font-family: inherit; }
-.atk-btn:hover { border-color: #f80; color: #f80; background: #1a0e00; }
+.btn{background:transparent;border:1px solid #4a9;color:#4a9;border-radius:4px;padding:6px 13px;cursor:pointer;font-size:12px;transition:all .15s;font-family:inherit;white-space:nowrap}
+.btn:hover{background:#4a9;color:#000}
+.btn.full{width:100%;margin-top:4px}
+.btn.danger{border-color:#c33;color:#c33;padding:9px;width:100%;margin-top:6px;font-size:13px;font-weight:600}
+.btn.danger:hover{background:#c33;color:#fff}
 
-.worker-item { display: flex; align-items: center; gap: 8px; padding: 8px 0;
-               border-bottom: 1px solid #222; }
-.worker-item:last-child { border-bottom: none; }
-.dot { width: 8px; height: 8px; border-radius: 50%; flex-shrink: 0; }
-.dot.idle     { background: #4c4; }
-.dot.attacking { background: #f80; }
-.dot.offline  { background: #e44; }
-.dot.checking { background: #555; }
-.w-name { flex: 1; font-size: 13px; color: #bbb; overflow: hidden; text-overflow: ellipsis; }
-.w-state { font-size: 11px; color: #f80; min-width: 60px; text-align: right; }
-.w-state.idle { color: #4c4; }
-.w-actions { display: flex; gap: 4px; }
-.w-actions select { width: 80px; margin: 0; padding: 4px 6px; font-size: 11px; }
-.w-actions .btn { padding: 4px 10px; font-size: 11px; }
+/* Список атак */
+.atk-list{display:flex;flex-direction:column;gap:8px}
+.atk-row{background:#111;border:1px solid #222;border-radius:5px;padding:12px 14px;display:flex;align-items:flex-start;gap:14px;transition:border-color .15s}
+.atk-row:hover{border-color:#333}
+.atk-row.active-atk{border-color:#f80;background:#110f00}
 
-#event-log { max-height: 100px; overflow-y: auto; font-size: 11px; color: #555;
-             margin-top: 8px; line-height: 1.7; }
-.log-entry .ts { color: #333; }
-.log-entry .msg { }
+.atk-left{flex:1;min-width:0}
+.atk-head{display:flex;align-items:center;gap:8px;margin-bottom:5px}
+.atk-name{font-size:13px;font-weight:600;color:#ddd}
+.atk-badge{font-size:9px;padding:2px 6px;border-radius:3px;text-transform:uppercase;letter-spacing:.5px;font-weight:700}
+.badge-flood{background:#1a0a00;color:#f80;border:1px solid #553300}
+.badge-recon{background:#0a0a1a;color:#5af;border:1px solid #223355}
+.badge-inject{background:#1a001a;color:#d4f;border:1px solid #442244}
+.badge-exhaust{background:#001a0a;color:#4d4;border:1px solid #224422}
+.badge-slow{background:#1a1a00;color:#cc4;border:1px solid #444400}
+
+.atk-desc{font-size:12px;color:#888;line-height:1.55;margin-bottom:5px}
+.atk-meta{display:flex;flex-wrap:wrap;gap:6px}
+.meta-chip{font-size:10px;padding:2px 7px;border-radius:3px;background:#1a1a1a;color:#555;border:1px solid #222}
+.meta-chip b{color:#777}
+
+.atk-right{display:flex;flex-direction:column;align-items:flex-end;gap:6px;flex-shrink:0;padding-top:2px}
+.atk-start{background:transparent;border:1px solid #555;color:#888;border-radius:4px;padding:6px 14px;cursor:pointer;font-size:12px;font-family:inherit;transition:all .2s;white-space:nowrap}
+.atk-start:hover{border-color:#f80;color:#f80;background:#1a0e00}
+.atk-start.running{border-color:#f80;color:#f80;background:#1a0e00}
+.atk-status{font-size:10px;color:#444}
+
+/* Правая колонка */
+.dot{width:8px;height:8px;border-radius:50%;flex-shrink:0}
+.dot.idle{background:#4a4}.dot.attacking{background:#f80}.dot.offline{background:#c33}.dot.checking{background:#444}
+.witem{display:flex;align-items:center;gap:7px;padding:7px 0;border-bottom:1px solid #1e1e1e}
+.witem:last-child{border-bottom:none}
+.wname{flex:1;font-size:12px;color:#aaa;overflow:hidden;text-overflow:ellipsis}
+.wstate{font-size:10px;color:#f80;min-width:52px;text-align:right}
+.wstate.idle{color:#4a4}
+.wa{display:flex;gap:3px;align-items:center}
+.wa select{width:auto;margin:0;padding:3px 5px;font-size:10px}
+.wa .btn{padding:3px 8px;font-size:10px}
+
+#elog{max-height:110px;overflow-y:auto;font-size:11px;line-height:1.7;margin-top:6px}
+.le .lt{color:#333}.le .lm{color:#888}
 </style>
 </head>
 <body>
 
 <h1>ГЛАВНАЯ НОДА</h1>
-<p class="subtitle">Управление распределённой атакой для демонстрации системы защиты</p>
+<p class="sub">Панель управления атакующей инфраструктурой · демонстрация для ВКР</p>
 
-<div class="status-bar">
-  <div class="item"><span class="label">Цель</span><span class="value" id="sb-target">—</span></div>
-  <div class="item"><span class="label">Атака</span><span class="value" id="sb-attack">—</span></div>
-  <div class="item"><span class="label">Ноды</span><span class="value" id="sb-workers">0/0</span></div>
-  <div class="item"><span class="label">Статус</span><span class="value" id="sb-status">ожидание</span></div>
+<div class="sbar">
+  <div class="si"><span class="sl">Цель</span><span class="sv" id="sb-t">—</span></div>
+  <div class="si"><span class="sl">Активная атака</span><span class="sv" id="sb-a">—</span></div>
+  <div class="si"><span class="sl">Ноды онлайн</span><span class="sv" id="sb-w">0 / 0</span></div>
+  <div class="si"><span class="sl">Статус</span><span class="sv" id="sb-s">ожидание</span></div>
 </div>
 
-<div class="row">
+<div class="layout">
 
-  <div class="card">
-    <div class="card-title">Цель и тип атаки</div>
-    <input id="target-ip" placeholder="IP-адрес цели (напр. 10.129.0.21)">
-    <button class="btn" style="width:100%;margin-bottom:12px" onclick="setTarget()">Установить цель</button>
-    <div class="card-title" style="margin-bottom:8px">Тип атаки — все ноды</div>
-    <div class="atk-grid">
-      <button class="atk-btn" onclick="attack('flood')">HTTP Флуд</button>
-      <button class="atk-btn" onclick="attack('ddos')">DDoS</button>
-      <button class="atk-btn" onclick="attack('scan')">Сканирование</button>
-      <button class="atk-btn" onclick="attack('brute')">Перебор</button>
-      <button class="atk-btn" onclick="attack('sqli')">SQL-инъекция</button>
-      <button class="atk-btn" onclick="attack('slowloris')">Slowloris</button>
-      <button class="atk-btn" onclick="attack('flash')">Flash Crowd</button>
-      <button class="atk-btn" onclick="attack('slow')">Медленный флуд</button>
-    </div>
-    <button class="btn stop-all" onclick="stopAll()">ОСТАНОВИТЬ ВСЕ НОДЫ</button>
-  </div>
-
-  <div class="card">
-    <div class="card-title">Ноды <span id="w-count" style="color:#444">(0)</span></div>
-    <input id="worker-ip" placeholder="IP дополнительной ноды">
-    <button class="btn" style="width:100%;margin-bottom:12px" onclick="addWorker()">Добавить ноду</button>
-    <div id="workers-list">
-      <span style="color:#444;font-size:12px">Нет дополнительных нод</span>
+<!-- Левая колонка: виды атак -->
+<div>
+  <div class="card" style="margin-bottom:8px;padding:10px 14px">
+    <div style="display:flex;gap:8px;align-items:center">
+      <input id="tip" placeholder="IP-адрес или хост цели (напр. 10.129.0.21)" style="margin:0;flex:1">
+      <button class="btn" onclick="setTarget()">Установить цель</button>
     </div>
   </div>
 
-</div>
-
-<div class="row">
   <div class="card">
-    <div class="card-title">Активные атаки</div>
-    <div id="activity" style="font-size:13px;line-height:1.9;color:#888;min-height:40px">
-      <span style="color:#444">Нет активных атак</span>
+    <div class="ctitle">Сценарии атак — запуск на всех нодах</div>
+    <div class="atk-list" id="atk-list">
+
+      <!-- HTTP Флуд -->
+      <div class="atk-row" id="row-flood">
+        <div class="atk-left">
+          <div class="atk-head">
+            <span class="atk-name">HTTP Флуд</span>
+            <span class="atk-badge badge-flood">объёмная атака</span>
+          </div>
+          <div class="atk-desc">
+            Инструмент <b>Apache Benchmark (ab)</b>: генерирует 500 000 GET-запросов
+            к корневому URI (<code>/</code>) с 300 параллельными соединениями с одного IP-адреса.
+            Цель — перегрузить веб-сервер количеством запросов.
+          </div>
+          <div class="atk-meta">
+            <span class="meta-chip">Команда: <b>ab -n 500000 -c 300 http://TARGET/</b></span>
+            <span class="meta-chip">RPS: <b>200–400</b></span>
+            <span class="meta-chip">Уник. IP: <b>1</b></span>
+            <span class="meta-chip">top_ip_share ≈ <b>1.0</b></span>
+            <span class="meta-chip">Детектор: <b>уровень 3</b></span>
+          </div>
+        </div>
+        <div class="atk-right">
+          <button class="atk-start" onclick="attack('flood')">▶ Запустить</button>
+          <span class="atk-status" id="st-flood">—</span>
+        </div>
+      </div>
+
+      <!-- DDoS -->
+      <div class="atk-row" id="row-ddos">
+        <div class="atk-left">
+          <div class="atk-head">
+            <span class="atk-name">DDoS (имитация ботнета)</span>
+            <span class="atk-badge badge-flood">объёмная атака</span>
+          </div>
+          <div class="atk-desc">
+            Скрипт <b>ddos_spoof.py</b>: 20 потоков непрерывно шлют GET-запросы,
+            подставляя случайный IP в заголовок <code>X-Forwarded-For</code>
+            (имитация 500 разных источников из пула случайных адресов).
+            User-Agent чередуется из 5 вариантов.
+          </div>
+          <div class="atk-meta">
+            <span class="meta-chip">Потоки: <b>20</b></span>
+            <span class="meta-chip">Задержка: <b>50–200 мс</b></span>
+            <span class="meta-chip">Уник. IP: <b>~500 (фиктивные)</b></span>
+            <span class="meta-chip">new_ip_ratio ≈ <b>1.0</b></span>
+            <span class="meta-chip">Детектор: <b>уровень 2–3</b></span>
+          </div>
+        </div>
+        <div class="atk-right">
+          <button class="atk-start" onclick="attack('ddos')">▶ Запустить</button>
+          <span class="atk-status" id="st-ddos">—</span>
+        </div>
+      </div>
+
+      <!-- Сканирование -->
+      <div class="atk-row" id="row-scan">
+        <div class="atk-left">
+          <div class="atk-head">
+            <span class="atk-name">Сканирование уязвимостей</span>
+            <span class="atk-badge badge-recon">разведка</span>
+          </div>
+          <div class="atk-desc">
+            Инструмент <b>Nikto</b>: автоматический сканер, проверяет ~6 700 потенциально
+            опасных URI (<code>/wp-admin</code>, <code>/.env</code>, <code>/phpmyadmin</code>,
+            <code>/actuator</code> и др.) в поиске известных уязвимостей и конфигурационных файлов.
+          </div>
+          <div class="atk-meta">
+            <span class="meta-chip">Команда: <b>nikto -h http://TARGET -maxtime 120s</b></span>
+            <span class="meta-chip">Доля 404: <b>&gt; 70%</b></span>
+            <span class="meta-chip">uri_entropy: <b>высокая</b></span>
+            <span class="meta-chip">suspicious_uri_ratio: <b>~1.0</b></span>
+            <span class="meta-chip">Детектор: <b>уровень 2</b></span>
+          </div>
+        </div>
+        <div class="atk-right">
+          <button class="atk-start" onclick="attack('scan')">▶ Запустить</button>
+          <span class="atk-status" id="st-scan">—</span>
+        </div>
+      </div>
+
+      <!-- Перебор паролей -->
+      <div class="atk-row" id="row-brute">
+        <div class="atk-left">
+          <div class="atk-head">
+            <span class="atk-name">Перебор паролей (Brute Force)</span>
+            <span class="atk-badge badge-inject">атака учётных данных</span>
+          </div>
+          <div class="atk-desc">
+            Скрипт <b>brute.py</b>: непрерывно шлёт POST-запросы на
+            <code>/login</code> со случайными парами логин/пароль (~20 req/s).
+            Имитирует автоматизированный подбор учётных данных.
+          </div>
+          <div class="atk-meta">
+            <span class="meta-chip">Метод: <b>POST /login</b></span>
+            <span class="meta-chip">Скорость: <b>~20 req/s</b></span>
+            <span class="meta-chip">Доля 4xx: <b>&gt; 80%</b></span>
+            <span class="meta-chip">top_uri_share ≈ <b>1.0</b></span>
+            <span class="meta-chip">Детектор: <b>уровень 2</b></span>
+          </div>
+        </div>
+        <div class="atk-right">
+          <button class="atk-start" onclick="attack('brute')">▶ Запустить</button>
+          <span class="atk-status" id="st-brute">—</span>
+        </div>
+      </div>
+
+      <!-- SQL-инъекция -->
+      <div class="atk-row" id="row-sqli">
+        <div class="atk-left">
+          <div class="atk-head">
+            <span class="atk-name">SQL-инъекция</span>
+            <span class="atk-badge badge-inject">инъекция</span>
+          </div>
+          <div class="atk-desc">
+            Скрипт <b>sqli.py</b>: отправляет GET/POST запросы с 15 классическими
+            SQL-пейлоадами (<code>' OR 1=1--</code>, <code>UNION SELECT</code>,
+            <code>SLEEP(3)</code> и др.) к эндпоинтам
+            <code>/search</code>, <code>/login</code>, <code>/api/data</code>.
+          </div>
+          <div class="atk-meta">
+            <span class="meta-chip">Пейлоадов: <b>15</b></span>
+            <span class="meta-chip">Эндпоинтов: <b>4</b></span>
+            <span class="meta-chip">Доля 4xx/5xx: <b>высокая</b></span>
+            <span class="meta-chip">suspicious_uri_ratio: <b>высокий</b></span>
+            <span class="meta-chip">Детектор: <b>уровень 2</b></span>
+          </div>
+        </div>
+        <div class="atk-right">
+          <button class="atk-start" onclick="attack('sqli')">▶ Запустить</button>
+          <span class="atk-status" id="st-sqli">—</span>
+        </div>
+      </div>
+
+      <!-- Slowloris -->
+      <div class="atk-row" id="row-slowloris">
+        <div class="atk-left">
+          <div class="atk-head">
+            <span class="atk-name">Slowloris</span>
+            <span class="atk-badge badge-exhaust">исчерпание ресурсов</span>
+          </div>
+          <div class="atk-desc">
+            Скрипт <b>slowloris.py</b>: открывает 200 TCP-соединений и удерживает их
+            незавершёнными — заголовки HTTP передаются по одному, с паузами между
+            байтами. Истощает пул worker-соединений nginx, не генерируя большого трафика.
+          </div>
+          <div class="atk-meta">
+            <span class="meta-chip">Соединений: <b>200</b></span>
+            <span class="meta-chip">RPS: <b>низкий (&lt; 5)</b></span>
+            <span class="meta-chip">avg_request_time: <b>очень высокое</b></span>
+            <span class="meta-chip">p95_time: <b>аномальный</b></span>
+            <span class="meta-chip">Детектор: <b>уровень 1–2</b></span>
+          </div>
+        </div>
+        <div class="atk-right">
+          <button class="atk-start" onclick="attack('slowloris')">▶ Запустить</button>
+          <span class="atk-status" id="st-slowloris">—</span>
+        </div>
+      </div>
+
+      <!-- Медленный флуд -->
+      <div class="atk-row" id="row-slow">
+        <div class="atk-left">
+          <div class="atk-head">
+            <span class="atk-name">Медленный флуд</span>
+            <span class="atk-badge badge-slow">умеренная нагрузка</span>
+          </div>
+          <div class="atk-desc">
+            Инструмент <b>wrk</b>: 2 потока, 20 параллельных соединений в течение 60 секунд,
+            запросы к <code>/search</code>. Имитирует продолжительную умеренную нагрузку
+            с высокой концентрацией запросов на один URI.
+          </div>
+          <div class="atk-meta">
+            <span class="meta-chip">Команда: <b>wrk -t2 -c20 -d60s /search</b></span>
+            <span class="meta-chip">RPS: <b>30–80</b></span>
+            <span class="meta-chip">top_uri_share ≈ <b>1.0</b></span>
+            <span class="meta-chip">Уник. IP: <b>1</b></span>
+            <span class="meta-chip">Детектор: <b>уровень 1–2</b></span>
+          </div>
+        </div>
+        <div class="atk-right">
+          <button class="atk-start" onclick="attack('slow')">▶ Запустить</button>
+          <span class="atk-status" id="st-slow">—</span>
+        </div>
+      </div>
+
+    </div><!-- /atk-list -->
+
+    <button class="btn danger" onclick="stopAll()">⏹ ОСТАНОВИТЬ ВСЕ НОДЫ</button>
+  </div>
+</div><!-- /left -->
+
+<!-- Правая колонка -->
+<div>
+  <div class="card">
+    <div class="ctitle">Дополнительные ноды <span id="w-count" style="color:#333">(0)</span></div>
+    <input id="wip" placeholder="IP дополнительной ноды">
+    <button class="btn full" onclick="addWorker()">+ Добавить ноду</button>
+    <div id="wlist" style="margin-top:10px">
+      <span style="color:#333;font-size:11px">Нет дополнительных нод.<br>Главная нода атакует самостоятельно.</span>
     </div>
   </div>
+
   <div class="card">
-    <div class="card-title">Журнал событий</div>
-    <div id="event-log"></div>
+    <div class="ctitle">Текущая активность</div>
+    <div id="act" style="font-size:12px;line-height:1.9;min-height:36px">
+      <span style="color:#333">Нет активных атак</span>
+    </div>
   </div>
-</div>
+
+  <div class="card">
+    <div class="ctitle">Журнал событий</div>
+    <div id="elog"></div>
+  </div>
+</div><!-- /right -->
+
+</div><!-- /layout -->
 
 <script>
 const B = window.location.origin;
-const ATK = ['flood','ddos','scan','brute','sqli','slowloris','flash','slow'];
-const ATK_RU = {flood:'HTTP Флуд',ddos:'DDoS',scan:'Сканирование',brute:'Перебор',
-                sqli:'SQL-инъекция',slowloris:'Slowloris',flash:'Flash Crowd',slow:'Медл. флуд'};
-let _prev = {};
+const ATK = ['flood','ddos','scan','brute','sqli','slowloris','slow'];
+const LABEL = {flood:'HTTP Флуд',ddos:'DDoS (ботнет)',scan:'Сканирование',
+               brute:'Перебор паролей',sqli:'SQL-инъекция',slowloris:'Slowloris',
+               slow:'Медленный флуд'};
+let _prev = {}, _curAtk = null;
 
 function ts() { return new Date().toLocaleTimeString(); }
-function addLog(msg, color) {
-  const el = document.getElementById('event-log');
-  const div = document.createElement('div');
-  div.className = 'log-entry';
-  div.innerHTML = '<span class="ts">['+ts()+']</span> <span class="msg" style="color:'+(color||'#8af')+'">'+msg+'</span>';
-  el.insertBefore(div, el.firstChild);
-  if (el.children.length > 30) el.removeChild(el.lastChild);
+function addLog(msg, c) {
+  const el = document.getElementById('elog');
+  const d = document.createElement('div'); d.className = 'le';
+  d.innerHTML = '<span class="lt">['+ts()+']</span> <span class="lm" style="color:'+(c||'#6af')+'">'+msg+'</span>';
+  el.insertBefore(d, el.firstChild);
+  if (el.children.length > 40) el.removeChild(el.lastChild);
 }
-
-async function api(path, method, body) {
-  const r = await fetch(B+path, {method: method||'GET',
-    headers: body ? {'Content-Type':'application/json'} : {},
-    body: body ? JSON.stringify(body) : undefined});
+async function api(p, m, b) {
+  const r = await fetch(B+p, {method:m||'GET',
+    headers: b ? {'Content-Type':'application/json'} : {},
+    body: b ? JSON.stringify(b) : undefined});
   return r.json();
 }
 
 async function setTarget() {
-  const t = document.getElementById('target-ip').value.trim();
-  if (!t) { addLog('Введите IP цели', '#e44'); return; }
-  await api('/target', 'POST', {target: t});
-  addLog('Цель: ' + t, '#4c4');
+  const t = document.getElementById('tip').value.trim();
+  if (!t) { addLog('Введите IP цели', '#c33'); return; }
+  await api('/target','POST',{target:t});
+  addLog('Цель установлена: '+t, '#4a4');
   refresh();
 }
 
 async function addWorker() {
-  const ip = document.getElementById('worker-ip').value.trim();
-  if (!ip) { addLog('Введите IP ноды', '#e44'); return; }
-  const d = await api('/workers/add', 'POST', {ip});
-  if (d.error) { addLog('Ошибка: ' + d.error, '#e44'); return; }
-  document.getElementById('worker-ip').value = '';
-  addLog('Добавлена нода: ' + ip, '#4c4');
+  const ip = document.getElementById('wip').value.trim();
+  if (!ip) { addLog('Введите IP ноды', '#c33'); return; }
+  const d = await api('/workers/add','POST',{ip});
+  if (d.error) { addLog('Ошибка: '+d.error,'#c33'); return; }
+  document.getElementById('wip').value = '';
+  addLog('Нода добавлена: '+ip, '#4a4');
   refresh();
 }
 
 async function removeWorker(ip) {
-  await api('/workers/'+encodeURIComponent(ip), 'DELETE');
-  addLog('Нода удалена: ' + ip, '#e44');
-  refresh();
+  await api('/workers/'+encodeURIComponent(ip),'DELETE');
+  addLog('Нода удалена: '+ip,'#c33'); refresh();
+}
+
+function setAtkHighlight(type) {
+  ATK.forEach(t => {
+    const r = document.getElementById('row-'+t);
+    const b = document.querySelector('#row-'+t+' .atk-start');
+    if (!r) return;
+    if (t === type) { r.classList.add('active-atk'); if(b) b.classList.add('running'); }
+    else            { r.classList.remove('active-atk'); if(b) b.classList.remove('running'); }
+  });
+  ATK.forEach(t => {
+    const el = document.getElementById('st-'+t);
+    if (!el) return;
+    el.textContent = t === type ? 'активна' : '—';
+    el.style.color = t === type ? '#f80' : '#444';
+  });
 }
 
 async function attack(type) {
-  const target = document.getElementById('target-ip').value.trim() || undefined;
-  const d = await api('/attack/start', 'POST', {attack_type: type, target});
-  if (d.error) { addLog('Ошибка: ' + d.error, '#e44'); return; }
-  addLog((ATK_RU[type]||type) + ' → ' + d.target + ' (нод: ' + d.workers_notified + ')', '#f80');
+  const target = document.getElementById('tip').value.trim() || undefined;
+  const d = await api('/attack/start','POST',{attack_type:type,target});
+  if (d.error) { addLog('Ошибка: '+d.error,'#c33'); return; }
+  _curAtk = type;
+  setAtkHighlight(type);
+  addLog((LABEL[type]||type)+' запущена → '+d.target+' (нод: '+d.workers_notified+')', '#f80');
 }
 
 async function stopAll() {
-  await api('/attack/stop', 'POST');
-  addLog('Атака остановлена', '#e44');
+  await api('/attack/stop','POST');
+  _curAtk = null;
+  setAtkHighlight(null);
+  addLog('Все атаки остановлены','#c33');
 }
 
 async function runWorker(ip) {
-  const sel = document.getElementById('wsel-'+ip);
-  const type = sel ? sel.value : 'flood';
-  const target = document.getElementById('target-ip').value.trim() || undefined;
-  const d = await api('/workers/'+encodeURIComponent(ip)+'/run', 'POST', {attack_type: type, target});
-  if (d.error) { addLog('['+ip+'] ' + d.error, '#e44'); return; }
-  addLog('['+ip+'] ' + (ATK_RU[type]||type), '#f80');
+  const s = document.getElementById('ws-'+ip);
+  const type = s ? s.value : 'flood';
+  const target = document.getElementById('tip').value.trim() || undefined;
+  const d = await api('/workers/'+encodeURIComponent(ip)+'/run','POST',{attack_type:type,target});
+  if (d.error) { addLog('['+ip+'] '+d.error,'#c33'); return; }
+  addLog('['+ip+'] '+(LABEL[type]||type), '#f80');
 }
 
 async function stopWorker(ip) {
-  await api('/workers/'+encodeURIComponent(ip)+'/stop', 'POST');
-  addLog('['+ip+'] остановлен', '#888');
+  await api('/workers/'+encodeURIComponent(ip)+'/stop','POST');
+  addLog('['+ip+'] остановлен','#888');
 }
 
-function dotCls(s) { return s === 'attacking' ? 'attacking' : s === 'offline' ? 'offline' : s === 'checking' ? 'checking' : 'idle'; }
+function dotC(s) { return s==='attacking'?'attacking':s==='offline'?'offline':s==='checking'?'checking':'idle'; }
 
 async function refresh() {
   try {
     const d = await api('/status');
+    document.getElementById('sb-t').textContent = d.target||'—';
+    const ca = d.current_attack;
+    document.getElementById('sb-a').textContent = ca ? (LABEL[ca]||ca) : '—';
+    document.getElementById('sb-w').textContent = d.workers_online+' / '+d.workers_total;
+    const ss = document.getElementById('sb-s');
+    ss.textContent = d.attack_active ? 'атака активна' : 'ожидание';
+    ss.className = 'sv '+(d.attack_active ? 'on' : 'ok');
 
-    document.getElementById('sb-target').textContent = d.target || '—';
-    const atk = d.current_attack;
-    document.getElementById('sb-attack').textContent = atk ? (ATK_RU[atk]||atk) : '—';
-    document.getElementById('sb-workers').textContent = d.workers_online+'/'+d.workers_total;
-    const se = document.getElementById('sb-status');
-    se.textContent = d.attack_active ? 'атака активна' : 'ожидание';
-    se.className = 'value ' + (d.attack_active ? 'active' : 'ok');
+    if (!document.getElementById('tip').value && d.target)
+      document.getElementById('tip').value = d.target;
 
-    if (!document.getElementById('target-ip').value && d.target)
-      document.getElementById('target-ip').value = d.target;
+    if (d.attack_active && d.current_attack && d.current_attack !== _curAtk) {
+      _curAtk = d.current_attack; setAtkHighlight(_curAtk);
+    } else if (!d.attack_active && _curAtk) {
+      _curAtk = null; setAtkHighlight(null);
+    }
 
     // Активность
-    const attacking = Object.entries(d.workers||{}).filter(([,w]) => w.status === 'attacking');
-    const act = document.getElementById('activity');
-    act.innerHTML = attacking.length === 0
-      ? '<span style="color:#444">Нет активных атак</span>'
-      : attacking.map(([ip,w]) => {
-          const name = (w.hostname && w.hostname !== ip) ? w.hostname : ip;
-          const a = ATK_RU[w.current_attack] || w.current_attack;
-          return '<div style="padding:2px 0"><span style="color:#f80;font-weight:600">'+a+'</span>'
-            +'<span style="color:#555"> → '+d.target+'</span>'
-            +' <span style="color:#444;font-size:12px">('+name+')</span></div>';
-        }).join('');
+    const atkg = Object.entries(d.workers||{}).filter(([,w])=>w.status==='attacking');
+    const act = document.getElementById('act');
+    if (d.attack_active && ca) {
+      act.innerHTML = '<div style="border-left:2px solid #f80;padding-left:8px">'
+        +'<span style="color:#f80;font-weight:600">'+(LABEL[ca]||ca)+'</span>'
+        +(d.target ? '<span style="color:#555"> → '+d.target+'</span>' : '')
+        +(atkg.length ? '<br><span style="color:#333;font-size:10px">+'+atkg.length+' нод</span>' : '')
+        +'</div>';
+    } else {
+      act.innerHTML = '<span style="color:#333">Нет активных атак</span>';
+    }
 
-    // Изменения статуса нод
-    Object.entries(d.workers||{}).forEach(([ip, w]) => {
+    // События
+    Object.entries(d.workers||{}).forEach(([ip,w])=>{
       const prev = _prev[ip];
       if (prev !== undefined && prev !== w.status) {
-        if (w.status === 'attacking')      addLog('['+ip+'] начал '+( ATK_RU[w.current_attack]||w.current_attack), '#f80');
-        else if (prev === 'attacking')     addLog('['+ip+'] остановлен', '#888');
-        else if (w.status === 'offline')   addLog('['+ip+'] недоступен', '#e44');
-        else if (prev === 'offline')       addLog('['+ip+'] подключился', '#4c4');
+        if (w.status==='attacking') addLog('['+ip+'] '+(LABEL[w.current_attack]||w.current_attack),'#f80');
+        else if (prev==='attacking') addLog('['+ip+'] остановлен','#888');
+        else if (w.status==='offline') addLog('['+ip+'] недоступен','#c33');
+        else if (prev==='offline') addLog('['+ip+'] подключился','#4a4');
       }
       _prev[ip] = w.status;
     });
 
-    // Список нод
+    // Ноды
     const keys = Object.keys(d.workers||{});
     document.getElementById('w-count').textContent = '('+keys.length+')';
-    const wl = document.getElementById('workers-list');
+    const wl = document.getElementById('wlist');
     if (!keys.length) {
-      wl.innerHTML = '<span style="color:#444;font-size:12px">Нет дополнительных нод</span>';
+      wl.innerHTML = '<span style="color:#333;font-size:11px">Нет дополнительных нод.<br>Главная нода атакует самостоятельно.</span>';
       return;
     }
     const saved = {};
-    keys.forEach(ip => { const s=document.getElementById('wsel-'+ip); if(s) saved[ip]=s.value; });
-    wl.innerHTML = keys.map(ip => {
-      const w = d.workers[ip], s = w.status||'checking';
-      const name = (w.hostname && w.hostname !== ip) ? w.hostname : ip;
-      const stateLabel = w.current_attack ? (ATK_RU[w.current_attack]||w.current_attack) : s;
-      const stateCls = w.current_attack ? '' : ' idle';
-      const opts = ATK.map(t=>'<option value="'+t+'">'+(ATK_RU[t]||t)+'</option>').join('');
-      return '<div class="worker-item">'
-        +'<div class="dot '+dotCls(s)+'"></div>'
-        +'<div class="w-name">'+name+'</div>'
-        +'<div class="w-state'+stateCls+'">'+stateLabel+'</div>'
-        +'<div class="w-actions">'
-        +'<select id="wsel-'+ip+'" style="width:auto;margin:0;padding:4px 6px;font-size:11px">'+opts+'</select>'
-        +'<button class="btn" style="padding:4px 10px;font-size:11px" onclick="runWorker(\''+ip+'\')">▶</button>'
-        +'<button class="btn" style="padding:4px 8px;font-size:11px;border-color:#555;color:#555" onclick="stopWorker(\''+ip+'\')">■</button>'
-        +'<button class="btn red" style="padding:4px 8px;font-size:11px" onclick="removeWorker(\''+ip+'\')">✕</button>'
+    keys.forEach(ip=>{ const s=document.getElementById('ws-'+ip); if(s) saved[ip]=s.value; });
+    wl.innerHTML = keys.map(ip=>{
+      const w=d.workers[ip], s=w.status||'checking';
+      const name=(w.hostname&&w.hostname!==ip)?w.hostname:ip;
+      const sl=w.current_attack?(LABEL[w.current_attack]||w.current_attack):s;
+      const sc=w.current_attack?'':'idle';
+      const opts=ATK.map(t=>'<option value="'+t+'">'+(LABEL[t]||t)+'</option>').join('');
+      return '<div class="witem"><div class="dot '+dotC(s)+'"></div>'
+        +'<div class="wname">'+name+'</div>'
+        +'<div class="wstate '+sc+'">'+sl+'</div>'
+        +'<div class="wa"><select id="ws-'+ip+'" style="margin:0">'+opts+'</select>'
+        +'<button class="btn" onclick="runWorker(\''+ip+'\')">▶</button>'
+        +'<button class="btn" style="border-color:#333;color:#555" onclick="stopWorker(\''+ip+'\')">■</button>'
+        +'<button class="btn" style="border-color:#553;color:#863" onclick="removeWorker(\''+ip+'\')">✕</button>'
         +'</div></div>';
     }).join('');
-    keys.forEach(ip => { const s=document.getElementById('wsel-'+ip); if(s&&saved[ip]) s.value=saved[ip]; });
-  } catch(e) { /* недоступен */ }
+    keys.forEach(ip=>{ const s=document.getElementById('ws-'+ip); if(s&&saved[ip]) s.value=saved[ip]; });
+  } catch(e) {}
 }
 
 setInterval(refresh, 3000);
