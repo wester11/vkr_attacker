@@ -37,7 +37,7 @@ W_PORT  = int(os.getenv("WORKER_PORT", 5001))
 _HERE = os.path.dirname(os.path.abspath(__file__))
 A = lambda name: os.path.join(_HERE, "attacks", name)
 
-app = FastAPI(title="Attack Commander")
+app = FastAPI(title="Главная нода")
 
 state = {
     "target":         TARGET,
@@ -257,296 +257,275 @@ _UI_HTML = """<!DOCTYPE html>
 <html lang="ru">
 <head>
 <meta charset="UTF-8">
-<title>Attack Commander</title>
+<title>Главная нода</title>
 <style>
 * { box-sizing: border-box; margin: 0; padding: 0; }
-body { font-family: 'Courier New', monospace; background: #0e0e0e; color: #bbb;
-       padding: 16px; font-size: 13px; }
-h1 { color: #e44; margin-bottom: 12px; font-size: 15px; letter-spacing: 1px; }
+body { font-family: 'Segoe UI', sans-serif; background: #111; color: #ccc;
+       padding: 20px; font-size: 14px; max-width: 960px; margin: 0 auto; }
+h1 { color: #fff; margin-bottom: 4px; font-size: 20px; font-weight: 600; }
+.subtitle { color: #555; font-size: 12px; margin-bottom: 16px; }
 
-.topbar { display: flex; gap: 24px; background: #161616; border: 1px solid #2a2a2a;
-          padding: 8px 16px; margin-bottom: 12px; font-size: 12px; flex-wrap: wrap; }
-.topbar span { color: #555; }
-.topbar b { color: #ddd; }
-.topbar b.active { color: #fa0; }
+.status-bar { display: flex; gap: 20px; background: #1a1a1a; border: 1px solid #2a2a2a;
+              border-radius: 6px; padding: 10px 16px; margin-bottom: 16px;
+              flex-wrap: wrap; align-items: center; }
+.status-bar .item { display: flex; flex-direction: column; gap: 2px; }
+.status-bar .label { font-size: 10px; color: #555; text-transform: uppercase; letter-spacing: .5px; }
+.status-bar .value { font-size: 13px; color: #ddd; font-weight: 500; }
+.status-bar .value.active { color: #f80; }
+.status-bar .value.ok { color: #4c4; }
 
-.grid { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-bottom: 10px; }
-.card { background: #161616; border: 1px solid #2a2a2a; padding: 12px; }
-.card h3 { font-size: 11px; color: #555; text-transform: uppercase; letter-spacing: 1px;
-           margin-bottom: 8px; border-bottom: 1px solid #222; padding-bottom: 4px; }
+.row { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin-bottom: 12px; }
+.card { background: #1a1a1a; border: 1px solid #2a2a2a; border-radius: 6px; padding: 16px; }
+.card-title { font-size: 11px; font-weight: 600; color: #666; text-transform: uppercase;
+              letter-spacing: .8px; margin-bottom: 12px; }
 
-input, select { width: 100%; background: #1a1a1a; color: #ccc; border: 1px solid #333;
-                padding: 6px 8px; font-size: 12px; margin-bottom: 6px;
-                font-family: 'Courier New', monospace; }
-input:focus, select:focus { outline: none; border-color: #555; }
+input, select {
+  width: 100%; background: #111; color: #ccc; border: 1px solid #333; border-radius: 4px;
+  padding: 8px 10px; font-size: 13px; margin-bottom: 8px; font-family: inherit;
+  transition: border-color .15s;
+}
+input:focus, select:focus { outline: none; border-color: #4a9; }
+input::placeholder { color: #444; }
 
-.btn { background: #1a1a1a; border: 1px solid #0af; color: #0af;
-       padding: 5px 12px; cursor: pointer; font-size: 12px; margin: 2px;
-       font-family: 'Courier New', monospace; }
-.btn:hover { background: #0af; color: #000; }
+.btn { background: transparent; border: 1px solid #4a9; color: #4a9; border-radius: 4px;
+       padding: 7px 14px; cursor: pointer; font-size: 13px; transition: all .15s;
+       font-family: inherit; }
+.btn:hover { background: #4a9; color: #000; }
 .btn.red  { border-color: #e44; color: #e44; }
 .btn.red:hover  { background: #e44; color: #fff; }
-.btn.grn  { border-color: #4c4; color: #4c4; }
-.btn.grn:hover  { background: #4c4; color: #000; }
-.btn.dim  { border-color: #444; color: #555; }
-.btn.full { width: calc(100% - 4px); margin: 6px 2px 0; display: block; }
-.atk-grid { display: flex; flex-wrap: wrap; gap: 3px; margin: 6px 0; }
+.btn.full { width: 100%; margin-top: 8px; }
+.btn.stop-all { background: #2a0a0a; border-color: #e44; color: #e44; font-weight: 600;
+                width: 100%; padding: 10px; margin-top: 10px; font-size: 14px; }
+.btn.stop-all:hover { background: #e44; color: #fff; }
 
-.worker-row { border-bottom: 1px solid #1e1e1e; padding: 8px 0; }
-.worker-row:last-child { border-bottom: none; }
-.worker-top { display: flex; align-items: center; gap: 8px; margin-bottom: 6px; }
-.dot { width: 7px; height: 7px; border-radius: 50%; flex-shrink: 0; }
-.s-idle     .dot { background: #4c4; }
-.s-attacking .dot { background: #fa0; }
-.s-offline  .dot { background: #e44; }
-.s-checking .dot { background: #555; }
-.wname { color: #ccc; flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
-         font-size: 12px; }
-.wip { color: #444; font-size: 11px; margin-left: 4px; }
-.watk { font-size: 11px; min-width: 70px; text-align: right; color: #fa0; }
-.watk.idle { color: #4c4; }
-.worker-btns { display: flex; gap: 3px; align-items: center; flex-wrap: wrap; }
+.atk-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 6px; margin: 10px 0; }
+.atk-btn { background: #111; border: 1px solid #333; color: #aaa; border-radius: 4px;
+           padding: 8px 6px; cursor: pointer; font-size: 12px; text-align: center;
+           transition: all .15s; font-family: inherit; }
+.atk-btn:hover { border-color: #f80; color: #f80; background: #1a0e00; }
 
-#log { height: 90px; overflow-y: auto; background: #0a0a0a; border: 1px solid #1e1e1e;
-       padding: 6px 8px; font-size: 11px; color: #666; margin-top: 6px; }
-.log-ts { color: #333; }
+.worker-item { display: flex; align-items: center; gap: 8px; padding: 8px 0;
+               border-bottom: 1px solid #222; }
+.worker-item:last-child { border-bottom: none; }
+.dot { width: 8px; height: 8px; border-radius: 50%; flex-shrink: 0; }
+.dot.idle     { background: #4c4; }
+.dot.attacking { background: #f80; }
+.dot.offline  { background: #e44; }
+.dot.checking { background: #555; }
+.w-name { flex: 1; font-size: 13px; color: #bbb; overflow: hidden; text-overflow: ellipsis; }
+.w-state { font-size: 11px; color: #f80; min-width: 60px; text-align: right; }
+.w-state.idle { color: #4c4; }
+.w-actions { display: flex; gap: 4px; }
+.w-actions select { width: 80px; margin: 0; padding: 4px 6px; font-size: 11px; }
+.w-actions .btn { padding: 4px 10px; font-size: 11px; }
+
+#event-log { max-height: 100px; overflow-y: auto; font-size: 11px; color: #555;
+             margin-top: 8px; line-height: 1.7; }
+.log-entry .ts { color: #333; }
+.log-entry .msg { }
 </style>
 </head>
 <body>
-<h1>ATTACK COMMANDER</h1>
 
-<div class="topbar">
-  <span>Цель: <b id="sb-target">—</b></span>
-  <span>Глоб. атака: <b id="sb-attack">—</b></span>
-  <span>Воркеры: <b id="sb-workers">0/0</b></span>
-  <span>Статус: <b id="sb-status">idle</b></span>
+<h1>ГЛАВНАЯ НОДА</h1>
+<p class="subtitle">Управление распределённой атакой для демонстрации системы защиты</p>
+
+<div class="status-bar">
+  <div class="item"><span class="label">Цель</span><span class="value" id="sb-target">—</span></div>
+  <div class="item"><span class="label">Атака</span><span class="value" id="sb-attack">—</span></div>
+  <div class="item"><span class="label">Ноды</span><span class="value" id="sb-workers">0/0</span></div>
+  <div class="item"><span class="label">Статус</span><span class="value" id="sb-status">ожидание</span></div>
 </div>
 
-<div class="grid">
+<div class="row">
 
   <div class="card">
-    <h3>Цель + глобальные атаки (все ноды)</h3>
-    <input id="target-ip" placeholder="IP defender VM (напр. 10.129.0.21)">
-    <button class="btn grn" onclick="setTarget()">Установить цель</button>
+    <div class="card-title">Цель и тип атаки</div>
+    <input id="target-ip" placeholder="IP-адрес цели (напр. 10.129.0.21)">
+    <button class="btn" style="width:100%;margin-bottom:12px" onclick="setTarget()">Установить цель</button>
+    <div class="card-title" style="margin-bottom:8px">Тип атаки — все ноды</div>
     <div class="atk-grid">
-      <button class="btn" onclick="attack('flood')">HTTP Flood</button>
-      <button class="btn" onclick="attack('ddos')">DDoS Spoof</button>
-      <button class="btn" onclick="attack('scan')">Nikto Scan</button>
-      <button class="btn" onclick="attack('brute')">Brute Force</button>
-      <button class="btn" onclick="attack('sqli')">SQL Inject</button>
-      <button class="btn" onclick="attack('slowloris')">Slowloris</button>
-      <button class="btn" onclick="attack('flash')">Flash Crowd</button>
-      <button class="btn" onclick="attack('slow')">Slow Flood</button>
+      <button class="atk-btn" onclick="attack('flood')">HTTP Флуд</button>
+      <button class="atk-btn" onclick="attack('ddos')">DDoS</button>
+      <button class="atk-btn" onclick="attack('scan')">Сканирование</button>
+      <button class="atk-btn" onclick="attack('brute')">Перебор</button>
+      <button class="atk-btn" onclick="attack('sqli')">SQL-инъекция</button>
+      <button class="atk-btn" onclick="attack('slowloris')">Slowloris</button>
+      <button class="atk-btn" onclick="attack('flash')">Flash Crowd</button>
+      <button class="atk-btn" onclick="attack('slow')">Медленный флуд</button>
     </div>
-    <button class="btn red full" onclick="stopAll()">СТОП — все ноды</button>
+    <button class="btn stop-all" onclick="stopAll()">ОСТАНОВИТЬ ВСЕ НОДЫ</button>
   </div>
 
   <div class="card">
-    <h3>Воркеры <span id="w-count" style="color:#444">(0)</span></h3>
-    <input id="worker-ip" placeholder="IP воркера (напр. 89.169.x.x)">
-    <button class="btn grn" onclick="addWorker()">+ Добавить</button>
-    <div id="workers-list" style="margin-top:8px">
-      <span style="color:#444;font-size:11px">Нет воркеров</span>
+    <div class="card-title">Ноды <span id="w-count" style="color:#444">(0)</span></div>
+    <input id="worker-ip" placeholder="IP дополнительной ноды">
+    <button class="btn" style="width:100%;margin-bottom:12px" onclick="addWorker()">Добавить ноду</button>
+    <div id="workers-list">
+      <span style="color:#444;font-size:12px">Нет дополнительных нод</span>
     </div>
   </div>
 
 </div>
 
-<div style="display:grid;grid-template-columns:1fr 1fr;gap:10px">
-
+<div class="row">
   <div class="card">
-    <h3>Активность атак</h3>
-    <div id="activity" style="font-size:12px;line-height:1.8;color:#888">
+    <div class="card-title">Активные атаки</div>
+    <div id="activity" style="font-size:13px;line-height:1.9;color:#888;min-height:40px">
       <span style="color:#444">Нет активных атак</span>
     </div>
   </div>
-
   <div class="card">
-    <h3>Лог событий</h3>
-    <div id="log"></div>
+    <div class="card-title">Журнал событий</div>
+    <div id="event-log"></div>
   </div>
-
 </div>
 
 <script>
 const B = window.location.origin;
 const ATK = ['flood','ddos','scan','brute','sqli','slowloris','flash','slow'];
-let _prevStatus = {};  // ip -> last known status for change detection
+const ATK_RU = {flood:'HTTP Флуд',ddos:'DDoS',scan:'Сканирование',brute:'Перебор',
+                sqli:'SQL-инъекция',slowloris:'Slowloris',flash:'Flash Crowd',slow:'Медл. флуд'};
+let _prev = {};
 
 function ts() { return new Date().toLocaleTimeString(); }
-function log(msg, color) {
-  const d = document.getElementById('log');
-  d.innerHTML = '<span class="log-ts">['+ts()+']</span> '
-    +'<span style="color:'+(color||'#8af')+'">'+msg+'</span><br>' + d.innerHTML;
+function addLog(msg, color) {
+  const el = document.getElementById('event-log');
+  const div = document.createElement('div');
+  div.className = 'log-entry';
+  div.innerHTML = '<span class="ts">['+ts()+']</span> <span class="msg" style="color:'+(color||'#8af')+'">'+msg+'</span>';
+  el.insertBefore(div, el.firstChild);
+  if (el.children.length > 30) el.removeChild(el.lastChild);
+}
+
+async function api(path, method, body) {
+  const r = await fetch(B+path, {method: method||'GET',
+    headers: body ? {'Content-Type':'application/json'} : {},
+    body: body ? JSON.stringify(body) : undefined});
+  return r.json();
 }
 
 async function setTarget() {
   const t = document.getElementById('target-ip').value.trim();
-  if (!t) { log('Введи IP цели', '#e44'); return; }
-  try {
-    await fetch(B+'/target', {method:'POST', headers:{'Content-Type':'application/json'},
-      body:JSON.stringify({target:t})});
-    log('Цель установлена: '+t, '#4c4');
-    refresh();
-  } catch(e) { log('Ошибка: '+e.message, '#e44'); }
+  if (!t) { addLog('Введите IP цели', '#e44'); return; }
+  await api('/target', 'POST', {target: t});
+  addLog('Цель: ' + t, '#4c4');
+  refresh();
 }
 
 async function addWorker() {
   const ip = document.getElementById('worker-ip').value.trim();
-  if (!ip) { log('Введи IP воркера', '#e44'); return; }
-  log('Добавляю: '+ip, '#888');
-  try {
-    const r = await fetch(B+'/workers/add', {method:'POST',
-      headers:{'Content-Type':'application/json'}, body:JSON.stringify({ip})});
-    if (!r.ok) { log('HTTP '+r.status+' от API', '#e44'); return; }
-    const d = await r.json();
-    if (d.error) { log('ERR: '+d.error, '#e44'); return; }
-    document.getElementById('worker-ip').value = '';
-    log('Воркер добавлен: '+ip, '#4c4');
-    refresh();
-  } catch(e) {
-    log('Нет связи с commander API: '+e.message, '#e44');
-  }
+  if (!ip) { addLog('Введите IP ноды', '#e44'); return; }
+  const d = await api('/workers/add', 'POST', {ip});
+  if (d.error) { addLog('Ошибка: ' + d.error, '#e44'); return; }
+  document.getElementById('worker-ip').value = '';
+  addLog('Добавлена нода: ' + ip, '#4c4');
+  refresh();
 }
 
 async function removeWorker(ip) {
-  try {
-    await fetch(B+'/workers/'+encodeURIComponent(ip), {method:'DELETE'});
-    log('Воркер удалён: '+ip, '#e44');
-    refresh();
-  } catch(e) { log('Ошибка: '+e.message, '#e44'); }
+  await api('/workers/'+encodeURIComponent(ip), 'DELETE');
+  addLog('Нода удалена: ' + ip, '#e44');
+  refresh();
 }
 
 async function attack(type) {
-  const target = document.getElementById('target-ip').value.trim();
-  log('Запускаю '+type+' на всех...', '#888');
-  try {
-    const r = await fetch(B+'/attack/start', {method:'POST',
-      headers:{'Content-Type':'application/json'},
-      body:JSON.stringify({attack_type:type, target:target||undefined})});
-    const d = await r.json();
-    if (d.error) { log('ERR: '+d.error, '#e44'); return; }
-    log('ALL >> '+type+' -> '+d.target+' (нод: '+d.workers_notified+')', '#fa0');
-  } catch(e) { log('Ошибка: '+e.message, '#e44'); }
+  const target = document.getElementById('target-ip').value.trim() || undefined;
+  const d = await api('/attack/start', 'POST', {attack_type: type, target});
+  if (d.error) { addLog('Ошибка: ' + d.error, '#e44'); return; }
+  addLog((ATK_RU[type]||type) + ' → ' + d.target + ' (нод: ' + d.workers_notified + ')', '#f80');
 }
 
 async function stopAll() {
-  try {
-    await fetch(B+'/attack/stop', {method:'POST'});
-    log('СТОП — все ноды', '#e44');
-  } catch(e) { log('Ошибка: '+e.message, '#e44'); }
+  await api('/attack/stop', 'POST');
+  addLog('Атака остановлена', '#e44');
 }
 
 async function runWorker(ip) {
-  const sel = document.getElementById('sel-'+ip);
+  const sel = document.getElementById('wsel-'+ip);
   const type = sel ? sel.value : 'flood';
-  const target = document.getElementById('target-ip').value.trim();
-  log('Запускаю '+type+' на '+ip, '#888');
-  try {
-    const r = await fetch(B+'/workers/'+encodeURIComponent(ip)+'/run',
-      {method:'POST', headers:{'Content-Type':'application/json'},
-       body:JSON.stringify({attack_type:type, target:target||undefined})});
-    const d = await r.json();
-    if (d.error) { log('ERR ['+ip+']: '+d.error, '#e44'); return; }
-    log('['+ip+'] >> '+type, '#fa0');
-  } catch(e) { log('Ошибка ['+ip+']: '+e.message, '#e44'); }
+  const target = document.getElementById('target-ip').value.trim() || undefined;
+  const d = await api('/workers/'+encodeURIComponent(ip)+'/run', 'POST', {attack_type: type, target});
+  if (d.error) { addLog('['+ip+'] ' + d.error, '#e44'); return; }
+  addLog('['+ip+'] ' + (ATK_RU[type]||type), '#f80');
 }
 
 async function stopWorker(ip) {
-  try {
-    await fetch(B+'/workers/'+encodeURIComponent(ip)+'/stop', {method:'POST'});
-    log('['+ip+'] остановлен', '#888');
-  } catch(e) { log('Ошибка: '+e.message, '#e44'); }
+  await api('/workers/'+encodeURIComponent(ip)+'/stop', 'POST');
+  addLog('['+ip+'] остановлен', '#888');
 }
 
-function sCls(s) {
-  return 's-'+({'attacking':'attacking','offline':'offline','checking':'checking'}[s]||'idle');
-}
+function dotCls(s) { return s === 'attacking' ? 'attacking' : s === 'offline' ? 'offline' : s === 'checking' ? 'checking' : 'idle'; }
 
 async function refresh() {
   try {
-    const r = await fetch(B+'/status');
-    const d = await r.json();
+    const d = await api('/status');
 
-    document.getElementById('sb-target').textContent  = d.target || '—';
-    document.getElementById('sb-attack').textContent  = d.current_attack || '—';
+    document.getElementById('sb-target').textContent = d.target || '—';
+    const atk = d.current_attack;
+    document.getElementById('sb-attack').textContent = atk ? (ATK_RU[atk]||atk) : '—';
     document.getElementById('sb-workers').textContent = d.workers_online+'/'+d.workers_total;
     const se = document.getElementById('sb-status');
-    se.textContent = d.attack_active ? (d.current_attack||'active') : 'idle';
-    se.className   = d.attack_active ? 'active' : '';
+    se.textContent = d.attack_active ? 'атака активна' : 'ожидание';
+    se.className = 'value ' + (d.attack_active ? 'active' : 'ok');
 
     if (!document.getElementById('target-ip').value && d.target)
       document.getElementById('target-ip').value = d.target;
 
-    // Обновить панель активности
-    const attacking = Object.entries(d.workers).filter(([,w]) => w.status === 'attacking');
+    // Активность
+    const attacking = Object.entries(d.workers||{}).filter(([,w]) => w.status === 'attacking');
     const act = document.getElementById('activity');
-    if (attacking.length === 0) {
-      act.innerHTML = '<span style="color:#444">Нет активных атак</span>';
-    } else {
-      act.innerHTML = attacking.map(([ip, w]) => {
-        const name = (w.hostname && w.hostname !== ip) ? w.hostname : ip;
-        return '<div style="border-left:2px solid #fa0;padding-left:8px;margin-bottom:6px">'
-          +'<span style="color:#fa0;font-weight:bold">'+w.current_attack+'</span>'
-          +' &rarr; <span style="color:#aaa">'+d.target+'</span><br>'
-          +'<span style="color:#555;font-size:11px">'+name+'</span>'
-          +'</div>';
-      }).join('');
-    }
+    act.innerHTML = attacking.length === 0
+      ? '<span style="color:#444">Нет активных атак</span>'
+      : attacking.map(([ip,w]) => {
+          const name = (w.hostname && w.hostname !== ip) ? w.hostname : ip;
+          const a = ATK_RU[w.current_attack] || w.current_attack;
+          return '<div style="padding:2px 0"><span style="color:#f80;font-weight:600">'+a+'</span>'
+            +'<span style="color:#555"> → '+d.target+'</span>'
+            +' <span style="color:#444;font-size:12px">('+name+')</span></div>';
+        }).join('');
 
-    // Детектировать изменения статуса воркеров и писать в лог
-    Object.entries(d.workers).forEach(([ip, w]) => {
-      const prev = _prevStatus[ip];
+    // Изменения статуса нод
+    Object.entries(d.workers||{}).forEach(([ip, w]) => {
+      const prev = _prev[ip];
       if (prev !== undefined && prev !== w.status) {
-        if (w.status === 'attacking')
-          log('['+ip+'] начал '+w.current_attack, '#fa0');
-        else if (w.status === 'idle' && prev === 'attacking')
-          log('['+ip+'] остановлен', '#888');
-        else if (w.status === 'offline' && prev !== 'offline')
-          log('['+ip+'] offline', '#e44');
-        else if (w.status !== 'offline' && prev === 'offline')
-          log('['+ip+'] online', '#4c4');
+        if (w.status === 'attacking')      addLog('['+ip+'] начал '+( ATK_RU[w.current_attack]||w.current_attack), '#f80');
+        else if (prev === 'attacking')     addLog('['+ip+'] остановлен', '#888');
+        else if (w.status === 'offline')   addLog('['+ip+'] недоступен', '#e44');
+        else if (prev === 'offline')       addLog('['+ip+'] подключился', '#4c4');
       }
-      _prevStatus[ip] = w.status;
+      _prev[ip] = w.status;
     });
 
-    const keys = Object.keys(d.workers);
+    // Список нод
+    const keys = Object.keys(d.workers||{});
     document.getElementById('w-count').textContent = '('+keys.length+')';
     const wl = document.getElementById('workers-list');
-
     if (!keys.length) {
-      wl.innerHTML = '<span style="color:#444;font-size:11px">Нет воркеров</span>';
+      wl.innerHTML = '<span style="color:#444;font-size:12px">Нет дополнительных нод</span>';
       return;
     }
-
     const saved = {};
-    keys.forEach(ip => { const s = document.getElementById('sel-'+ip); if(s) saved[ip]=s.value; });
-
+    keys.forEach(ip => { const s=document.getElementById('wsel-'+ip); if(s) saved[ip]=s.value; });
     wl.innerHTML = keys.map(ip => {
-      const w = d.workers[ip];
-      const s  = w.status || 'checking';
-      const atk = w.current_attack;
+      const w = d.workers[ip], s = w.status||'checking';
       const name = (w.hostname && w.hostname !== ip) ? w.hostname : ip;
-      const opts = ATK.map(t => '<option value="'+t+'">'+t+'</option>').join('');
-      const atkLabel = atk || s;
-      const atkCls   = atk ? '' : ' idle';
-      return '<div class="worker-row '+sCls(s)+'">'
-        +'<div class="worker-top">'
-        +'<div class="dot"></div>'
-        +'<div class="wname">'+name+'<span class="wip">'+ip+'</span></div>'
-        +'<div class="watk'+atkCls+'">'+atkLabel+'</div>'
-        +'</div>'
-        +'<div class="worker-btns">'
-        +'<select id="sel-'+ip+'" style="width:auto;flex:none;padding:3px 6px;margin:0">'+opts+'</select>'
-        +'<button class="btn" style="padding:3px 10px" data-ip="'+ip+'" onclick="runWorker(this.dataset.ip)">Run</button>'
-        +'<button class="btn dim" style="padding:3px 10px" data-ip="'+ip+'" onclick="stopWorker(this.dataset.ip)">Stop</button>'
-        +'<button class="btn red" style="padding:3px 8px" data-ip="'+ip+'" onclick="removeWorker(this.dataset.ip)">X</button>'
-        +'</div>'
-        +'</div>';
+      const stateLabel = w.current_attack ? (ATK_RU[w.current_attack]||w.current_attack) : s;
+      const stateCls = w.current_attack ? '' : ' idle';
+      const opts = ATK.map(t=>'<option value="'+t+'">'+(ATK_RU[t]||t)+'</option>').join('');
+      return '<div class="worker-item">'
+        +'<div class="dot '+dotCls(s)+'"></div>'
+        +'<div class="w-name">'+name+'</div>'
+        +'<div class="w-state'+stateCls+'">'+stateLabel+'</div>'
+        +'<div class="w-actions">'
+        +'<select id="wsel-'+ip+'" style="width:auto;margin:0;padding:4px 6px;font-size:11px">'+opts+'</select>'
+        +'<button class="btn" style="padding:4px 10px;font-size:11px" onclick="runWorker(\''+ip+'\')">▶</button>'
+        +'<button class="btn" style="padding:4px 8px;font-size:11px;border-color:#555;color:#555" onclick="stopWorker(\''+ip+'\')">■</button>'
+        +'<button class="btn red" style="padding:4px 8px;font-size:11px" onclick="removeWorker(\''+ip+'\')">✕</button>'
+        +'</div></div>';
     }).join('');
-
-    keys.forEach(ip => { const s=document.getElementById('sel-'+ip); if(s&&saved[ip]) s.value=saved[ip]; });
-  } catch(e) { /* API temporarily unavailable */ }
+    keys.forEach(ip => { const s=document.getElementById('wsel-'+ip); if(s&&saved[ip]) s.value=saved[ip]; });
+  } catch(e) { /* недоступен */ }
 }
 
 setInterval(refresh, 3000);
