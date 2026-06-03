@@ -48,6 +48,82 @@ EXPECTED_RPS = {
     "slow":      40,
 }
 
+# Шаблоны реальных HTTP-запросов для отображения в UI
+def attack_sample(attack_type: str, target: str) -> list[str]:
+    """Пример HTTP-запросов, генерируемых данным типом атаки."""
+    import random
+    t = target or "TARGET"
+    samples = {
+        "flood": [
+            f"GET / HTTP/1.1",
+            f"Host: {t}",
+            f"User-Agent: ApacheBench/2.3",
+            f"Accept: */*",
+            f"Connection: Keep-Alive",
+            f"",
+            f"← 300 параллельных соединений, 500 000 запросов",
+        ],
+        "ddos": [
+            f"GET / HTTP/1.1",
+            f"Host: {t}",
+            f"X-Forwarded-For: {random.randint(1,254)}.{random.randint(1,254)}.{random.randint(1,254)}.{random.randint(1,254)}",
+            f"X-Real-IP: {random.randint(1,254)}.{random.randint(1,254)}.{random.randint(1,254)}.{random.randint(1,254)}",
+            f"User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64)",
+            f"",
+            f"← IP меняется каждый запрос (500+ уникальных адресов)",
+        ],
+        "scan": [
+            f"GET /wp-admin HTTP/1.1",
+            f"GET /.env HTTP/1.1",
+            f"GET /phpmyadmin HTTP/1.1",
+            f"GET /actuator/env HTTP/1.1",
+            f"GET /.git/HEAD HTTP/1.1",
+            f"GET /admin/config.php HTTP/1.1",
+            f"",
+            f"← Nikto: ~6700 потенциально опасных URI",
+        ],
+        "brute": [
+            f"POST /login HTTP/1.1",
+            f"Host: {t}",
+            f"Content-Type: application/x-www-form-urlencoded",
+            f"",
+            f"username=admin&password=qwerty123",
+            f"username=root&password=password",
+            f"username=user&password=123456",
+            f"",
+            f"← ~20 POST-запросов в секунду, случайные пары",
+        ],
+        "sqli": [
+            f"GET /search?q=%27+OR+1%3D1-- HTTP/1.1",
+            f"GET /api/data?id=1+UNION+SELECT+null%2Cnull-- HTTP/1.1",
+            f"POST /login HTTP/1.1",
+            f"  username=admin%27--&password=x",
+            f"GET /user?name=%27+DROP+TABLE+users-- HTTP/1.1",
+            f"",
+            f"← 15 пейлоадов × 4 эндпоинта, ~10 req/s",
+        ],
+        "slowloris": [
+            f"GET / HTTP/1.1\\r\\n",
+            f"Host: {t}\\r\\n",
+            f"User-Agent: Mozilla/5.0\\r\\n",
+            f"X-a: b\\r\\n",
+            f"[пауза 10с]",
+            f"X-b: c\\r\\n",
+            f"[пауза 10с — заголовок не завершён]",
+            f"",
+            f"← 200 незавершённых TCP-соединений",
+        ],
+        "slow": [
+            f"GET /search HTTP/1.1",
+            f"Host: {t}",
+            f"User-Agent: wrk/4.2.0",
+            f"Connection: keep-alive",
+            f"",
+            f"← wrk: 2 потока, 15 соединений, 60 сек",
+        ],
+    }
+    return samples.get(attack_type, [f"Тип атаки: {attack_type}"])
+
 
 ATTACKS = {
     "flood":     lambda t: ["ab", "-n", "500000", "-c", "200", "-q", f"http://{t}/"],
@@ -119,6 +195,7 @@ def stats():
         "elapsed_sec":     elapsed,
         "estimated_rps":   exp_rps if alive else 0,
         "estimated_reqs":  est_req,
+        "sample_requests": attack_sample(current_attack, current_target) if alive else [],
     }
 
 

@@ -116,6 +116,7 @@ def check_worker(ip: str):
                 "elapsed_sec":    s.get("elapsed_sec", 0),
                 "estimated_rps":  s.get("estimated_rps", 0),
                 "estimated_reqs": s.get("estimated_reqs", 0),
+                "sample_requests": s.get("sample_requests", []),
             })
         except Exception:
             pass
@@ -718,52 +719,72 @@ async function refresh() {
     // ── Генерируемый трафик ──────────────────────────────────────────────────
     const traf = document.getElementById('traf');
     const atkg = Object.entries(d.workers||{}).filter(([,w])=>w.status==='attacking');
+
+    // Локальные примеры запросов (главная нода)
+    const LOCAL_SAMPLES = {
+      flood:    ['GET / HTTP/1.1','Host: TARGET','User-Agent: ApacheBench/2.3','Connection: Keep-Alive','','← 300 параллельных соединений'],
+      ddos:     ['GET / HTTP/1.1','Host: TARGET','X-Forwarded-For: 185.220.x.x  ← случайный','X-Real-IP: 185.220.x.x','User-Agent: Mozilla/5.0 ...','','← IP меняется каждый запрос'],
+      scan:     ['GET /wp-admin HTTP/1.1','GET /.env HTTP/1.1','GET /phpmyadmin HTTP/1.1','GET /actuator/env HTTP/1.1','GET /.git/HEAD HTTP/1.1','','← Nikto: ~6700 URI'],
+      brute:    ['POST /login HTTP/1.1','Content-Type: application/x-www-form-urlencoded','','username=admin&password=qwerty123','username=root&password=password','','← ~20 req/s, случайные пары'],
+      sqli:     ["GET /search?q=' OR 1=1-- HTTP/1.1","GET /api/data?id=1 UNION SELECT null-- HTTP/1.1","POST /login → username=admin'--&password=x","GET /user?name=' DROP TABLE users--","","← 15 пейлоадов × 4 эндпоинта"],
+      slowloris:['GET / HTTP/1.1\\r\\n','Host: TARGET\\r\\n','X-a: b\\r\\n  [пауза 10с]','X-b: c\\r\\n  [пауза 10с]','[заголовок не завершён]','','← 200 незавершённых соединений'],
+      slow:     ['GET /search HTTP/1.1','Host: TARGET','User-Agent: wrk/4.2.0','Connection: keep-alive','','← wrk: 2 потока, 15 соединений, 60с'],
+    };
+
     if (!d.attack_active && !atkg.length) {
       traf.innerHTML = '<span style="color:#333;font-size:12px">Нет активных атак</span>';
     } else {
       const totalRps  = d.total_rps  || 0;
       const totalReqs = d.total_reqs || 0;
-      // Строки по каждой ноде
-      const rows = atkg.map(([ip,w])=>{
-        const name = (w.hostname && w.hostname!==ip) ? w.hostname : ip;
-        const rps  = w.estimated_rps  || 0;
-        const reqs = w.estimated_reqs || 0;
-        const ela  = w.elapsed_sec    || 0;
-        const a    = LABEL[w.current_attack]||w.current_attack||'—';
-        return '<tr>'
-          +'<td style="color:#555;padding:2px 8px 2px 0">'+name+'</td>'
-          +'<td style="color:#f80;padding:2px 8px">'+a+'</td>'
-          +'<td style="color:#aaa;padding:2px 8px;text-align:right">~'+rps+' req/s</td>'
-          +'<td style="color:#777;padding:2px 8px;text-align:right">~'+reqs.toLocaleString()+' отпр.</td>'
-          +'<td style="color:#444;padding:2px 8px;text-align:right">'+ela+'с</td>'
-          +'</tr>';
-      });
+
+      // Блок одной ноды: stats + пример HTTP-запроса
+      function nodeBlock(name, atk, rps, reqs, ela, sampleLines) {
+        const safeLines = (sampleLines||[]).map(l=>{
+          const isComment = l.startsWith('←') || l==='' ;
+          return '<span style="color:'+(isComment?'#555':'#7af')+'">'+
+            l.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;')
+            +'</span>';
+        }).join('<br>');
+        return '<div style="background:#0a0a0a;border:1px solid #1e1e1e;border-radius:4px;'
+          +'padding:8px 10px;margin-bottom:8px">'
+          // Header row
+          +'<div style="display:flex;justify-content:space-between;align-items:center;'
+          +'margin-bottom:6px;padding-bottom:5px;border-bottom:1px solid #1a1a1a">'
+          +'<span style="color:#f80;font-weight:600;font-size:12px">'+name+'</span>'
+          +'<span style="font-size:11px;color:#555">'+(LABEL[atk]||atk||'—')+'</span>'
+          +'<span style="font-size:11px;color:#aaa">~'+rps+' req/s</span>'
+          +'<span style="font-size:11px;color:#666">~'+(reqs||0).toLocaleString()+' отпр.</span>'
+          +(ela?'<span style="font-size:10px;color:#333">'+ela+'с</span>':'')
+          +'</div>'
+          // HTTP sample
+          +'<pre style="margin:0;font-size:11px;line-height:1.6;font-family:monospace;'
+          +'overflow-x:auto;white-space:pre-wrap">'+ safeLines +'</pre>'
+          +'</div>';
+      }
+
+      let html = '<div style="margin-bottom:10px;padding:6px 8px;background:#0d0d0d;'
+        +'border:1px solid #1e1e1e;border-radius:4px;display:flex;gap:20px;align-items:center">'
+        +'<span style="color:#bbb;font-size:12px">Суммарный RPS:</span>'
+        +'<span style="color:#f80;font-weight:700;font-size:18px">~'+totalRps+'</span>'
+        +'<span style="color:#555;font-size:11px">отправлено: ~'+totalReqs.toLocaleString()+' запросов</span>'
+        +'</div>';
+
       // Главная нода
       if (d.attack_active && ca) {
-        const localRps = {flood:300,ddos:80,scan:5,brute:20,sqli:10,slowloris:2,slow:40};
-        rows.unshift('<tr>'
-          +'<td style="color:#555;padding:2px 8px 2px 0">главная нода (local)</td>'
-          +'<td style="color:#f80;padding:2px 8px">'+(LABEL[ca]||ca)+'</td>'
-          +'<td style="color:#aaa;padding:2px 8px;text-align:right">~'+(localRps[ca]||0)+' req/s</td>'
-          +'<td style="color:#444;padding:2px 8px;text-align:right">—</td>'
-          +'<td style="color:#444;padding:2px 8px;text-align:right">—</td>'
-          +'</tr>');
+        const localRps={flood:300,ddos:80,scan:5,brute:20,sqli:10,slowloris:2,slow:40};
+        html += nodeBlock('главная нода (local)', ca, localRps[ca]||0, null, null,
+          LOCAL_SAMPLES[ca]);
       }
-      traf.innerHTML =
-        '<div style="margin-bottom:8px;font-size:13px">'
-        +'<span style="color:#bbb">Суммарный RPS: </span>'
-        +'<span style="color:#f80;font-weight:600;font-size:16px">~'+totalRps+'</span>'
-        +'  <span style="color:#555;font-size:11px">отправлено запросов: ~'+totalReqs.toLocaleString()+'</span>'
-        +'</div>'
-        +'<table style="width:100%;border-collapse:collapse;font-size:11px">'
-        +'<tr style="color:#333;font-size:10px">'
-        +'<th style="text-align:left;padding:1px 8px 4px 0">Нода</th>'
-        +'<th style="text-align:left;padding:1px 8px">Атака</th>'
-        +'<th style="text-align:right;padding:1px 8px">RPS</th>'
-        +'<th style="text-align:right;padding:1px 8px">Запросов</th>'
-        +'<th style="text-align:right;padding:1px 8px">Время</th>'
-        +'</tr>'
-        + rows.join('') + '</table>';
+
+      // Воркеры
+      atkg.forEach(([ip,w])=>{
+        const name = (w.hostname&&w.hostname!==ip)?w.hostname:ip;
+        html += nodeBlock(name, w.current_attack,
+          w.estimated_rps||0, w.estimated_reqs||0, w.elapsed_sec||0,
+          w.sample_requests||LOCAL_SAMPLES[w.current_attack]);
+      });
+
+      traf.innerHTML = html;
     }
 
     // Активные ноды
