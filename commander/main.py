@@ -108,6 +108,17 @@ def check_worker(ip: str):
             "current_attack": info.get("current_attack"),
             "last_checked":   time.time(),
         })
+        # Расширенная статистика
+        try:
+            rs = requests.get(f"http://{ip}:{W_PORT}/stats", timeout=2)
+            s = rs.json()
+            state["workers"][ip].update({
+                "elapsed_sec":    s.get("elapsed_sec", 0),
+                "estimated_rps":  s.get("estimated_rps", 0),
+                "estimated_reqs": s.get("estimated_reqs", 0),
+            })
+        except Exception:
+            pass
     except Exception:
         if ip in state["workers"]:
             state["workers"][ip]["status"] = "offline"
@@ -137,6 +148,15 @@ threading.Thread(target=_bg_refresh, daemon=True).start()
 def get_status():
     online = sum(1 for w in state["workers"].values()
                  if w.get("status") not in ("offline", "checking"))
+    # Агрегированная статистика по всем атакующим нодам
+    total_rps  = sum(w.get("estimated_rps", 0)  for w in state["workers"].values()
+                     if w.get("status") == "attacking")
+    total_reqs = sum(w.get("estimated_reqs", 0) for w in state["workers"].values()
+                     if w.get("status") == "attacking")
+    # Включаем главную ноду (local) если атакует
+    _LOCAL_RPS = {"flood":300,"ddos":80,"scan":5,"brute":20,"sqli":10,"slowloris":2,"slow":40}
+    if state["attack_active"] and state["current_attack"]:
+        total_rps += _LOCAL_RPS.get(state["current_attack"], 0)
     return {
         "target":         state["target"],
         "attack_active":  state["attack_active"],
@@ -144,6 +164,8 @@ def get_status():
         "workers_total":  len(state["workers"]),
         "workers_online": online,
         "workers":        state["workers"],
+        "total_rps":      round(total_rps),
+        "total_reqs":     total_reqs,
     }
 
 
@@ -558,8 +580,14 @@ input::placeholder{color:#3a3a3a}
     </div>
   </div>
 
-  <div class="card">
-    <div class="ctitle">Текущая активность</div>
+  <!-- Генерируемый трафик -->
+  <div class="card" style="margin-bottom:10px">
+    <div class="ctitle">Генерируемый трафик</div>
+    <div id="traf"><span style="color:#333;font-size:12px">Нет активных атак</span></div>
+  </div>
+
+  <div class="card" style="margin-bottom:10px">
+    <div class="ctitle">Активные ноды</div>
     <div id="act" style="font-size:12px;line-height:1.9;min-height:36px">
       <span style="color:#333">Нет активных атак</span>
     </div>
@@ -687,8 +715,58 @@ async function refresh() {
       _curAtk = null; setAtkHighlight(null);
     }
 
-    // Активность
+    // ── Генерируемый трафик ──────────────────────────────────────────────────
+    const traf = document.getElementById('traf');
     const atkg = Object.entries(d.workers||{}).filter(([,w])=>w.status==='attacking');
+    if (!d.attack_active && !atkg.length) {
+      traf.innerHTML = '<span style="color:#333;font-size:12px">Нет активных атак</span>';
+    } else {
+      const totalRps  = d.total_rps  || 0;
+      const totalReqs = d.total_reqs || 0;
+      // Строки по каждой ноде
+      const rows = atkg.map(([ip,w])=>{
+        const name = (w.hostname && w.hostname!==ip) ? w.hostname : ip;
+        const rps  = w.estimated_rps  || 0;
+        const reqs = w.estimated_reqs || 0;
+        const ela  = w.elapsed_sec    || 0;
+        const a    = LABEL[w.current_attack]||w.current_attack||'—';
+        return '<tr>'
+          +'<td style="color:#555;padding:2px 8px 2px 0">'+name+'</td>'
+          +'<td style="color:#f80;padding:2px 8px">'+a+'</td>'
+          +'<td style="color:#aaa;padding:2px 8px;text-align:right">~'+rps+' req/s</td>'
+          +'<td style="color:#777;padding:2px 8px;text-align:right">~'+reqs.toLocaleString()+' отпр.</td>'
+          +'<td style="color:#444;padding:2px 8px;text-align:right">'+ela+'с</td>'
+          +'</tr>';
+      });
+      // Главная нода
+      if (d.attack_active && ca) {
+        const localRps = {flood:300,ddos:80,scan:5,brute:20,sqli:10,slowloris:2,slow:40};
+        rows.unshift('<tr>'
+          +'<td style="color:#555;padding:2px 8px 2px 0">главная нода (local)</td>'
+          +'<td style="color:#f80;padding:2px 8px">'+(LABEL[ca]||ca)+'</td>'
+          +'<td style="color:#aaa;padding:2px 8px;text-align:right">~'+(localRps[ca]||0)+' req/s</td>'
+          +'<td style="color:#444;padding:2px 8px;text-align:right">—</td>'
+          +'<td style="color:#444;padding:2px 8px;text-align:right">—</td>'
+          +'</tr>');
+      }
+      traf.innerHTML =
+        '<div style="margin-bottom:8px;font-size:13px">'
+        +'<span style="color:#bbb">Суммарный RPS: </span>'
+        +'<span style="color:#f80;font-weight:600;font-size:16px">~'+totalRps+'</span>'
+        +'  <span style="color:#555;font-size:11px">отправлено запросов: ~'+totalReqs.toLocaleString()+'</span>'
+        +'</div>'
+        +'<table style="width:100%;border-collapse:collapse;font-size:11px">'
+        +'<tr style="color:#333;font-size:10px">'
+        +'<th style="text-align:left;padding:1px 8px 4px 0">Нода</th>'
+        +'<th style="text-align:left;padding:1px 8px">Атака</th>'
+        +'<th style="text-align:right;padding:1px 8px">RPS</th>'
+        +'<th style="text-align:right;padding:1px 8px">Запросов</th>'
+        +'<th style="text-align:right;padding:1px 8px">Время</th>'
+        +'</tr>'
+        + rows.join('') + '</table>';
+    }
+
+    // Активные ноды
     const act = document.getElementById('act');
     if (d.attack_active && ca) {
       act.innerHTML = '<div style="border-left:2px solid #f80;padding-left:8px">'
