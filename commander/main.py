@@ -581,9 +581,9 @@ input::placeholder{color:#3a3a3a}
     </div>
   </div>
 
-  <!-- Генерируемый трафик -->
+  <!-- Атакующий трафик -->
   <div class="card" style="margin-bottom:10px">
-    <div class="ctitle">Генерируемый трафик</div>
+    <div class="ctitle">Атакующий трафик — что ноды отправляют на цель</div>
     <div id="traf"><span style="color:#333;font-size:12px">Нет активных атак</span></div>
   </div>
 
